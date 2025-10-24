@@ -1,0 +1,30 @@
+# IDE files
+.idea/
+*.iml
+
+# Build files
+build/
+.gradle/
+
+# Local properties
+local.properties
+
+# Keystore files
+*.jks
+*.keystore
+
+# APK files
+*.apk
+
+# Log files
+*.log
+
+# Captures
+.cxx/
+captures/
+
+# Gradle wrapper
+!gradle/wrapper/gradle-wrapper.jar
+
+# KSP
+/app/build/generated/ksp/
