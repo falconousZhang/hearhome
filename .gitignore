@@ -28,3 +28,6 @@ captures/
 
 # KSP
 /app/build/generated/ksp/
+
+# 忽略大文件(血的教训)
+*.hprof
