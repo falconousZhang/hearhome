@@ -1,25 +1,11 @@
 package com.example.hearhome.ui.auth
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
@@ -28,91 +14,77 @@ fun RegistrationScreen(
     viewModel: AuthViewModel,
     onNavigateToLogin: () -> Unit
 ) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var passwordError by remember { mutableStateOf<String?>(null) }
     val authState by viewModel.authState.collectAsState()
 
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var secQuestion by remember { mutableStateOf("") }
+    var secAnswer by remember { mutableStateOf("") }
+
+    val errorMessage = (authState as? AuthViewModel.AuthState.Error)?.message
+
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+        Modifier
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()) // 使其可滚动
     ) {
-        Text("Register", style = androidx.compose.material3.MaterialTheme.typography.headlineMedium)
-
-        Spacer(modifier = Modifier.height(16.dp))
+        Text("创建账号", style = MaterialTheme.typography.headlineLarge)
+        Spacer(Modifier.height(16.dp))
 
         OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            label = { Text("Email") },
-            isError = authState is AuthViewModel.AuthState.Error
+            value = email, onValueChange = { email = it },
+            label = { Text("邮箱") }, modifier = Modifier.fillMaxWidth()
         )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
+        Spacer(Modifier.height(12.dp))
         OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Password") },
+            value = password, onValueChange = { password = it },
+            label = { Text("密码（≥6位）") },
             visualTransformation = PasswordVisualTransformation(),
-            isError = passwordError != null || authState is AuthViewModel.AuthState.Error
+            modifier = Modifier.fillMaxWidth()
         )
 
-        Spacer(modifier = Modifier.height(8.dp))
-
+        Spacer(Modifier.height(16.dp))
+        Text("设置个性化问题（用于找回密码）", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = confirmPassword,
-            onValueChange = { confirmPassword = it },
-            label = { Text("Confirm Password") },
-            visualTransformation = PasswordVisualTransformation(),
-            isError = passwordError != null
+            value = secQuestion,
+            onValueChange = { secQuestion = it },
+            label = { Text("你的问题（例如：我第一只宠物的名字？）") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = secAnswer,
+            onValueChange = { secAnswer = it },
+            label = { Text("答案（区分大小写）") },
+            modifier = Modifier.fillMaxWidth()
         )
 
-        passwordError?.let {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(it, color = Color.Red)
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = {
+                viewModel.register(
+                    email.trim(), password, secQuestion.trim(), secAnswer.trim()
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = authState !is AuthViewModel.AuthState.Loading
+        ) {
+            Text(if (authState is AuthViewModel.AuthState.Loading) "注册中…" else "注册")
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        when (val state = authState) {
-            is AuthViewModel.AuthState.Loading -> {
-                CircularProgressIndicator()
-            }
-            is AuthViewModel.AuthState.Error -> {
-                Text(state.message, color = Color.Red)
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = {
-                    if (password != confirmPassword) {
-                        passwordError = "Passwords do not match."
-                    } else {
-                        passwordError = null
-                        viewModel.register(email, password)
-                    }
-                }) {
-                    Text("Register")
-                }
-            }
-            else -> {
-                Button(onClick = {
-                    if (password != confirmPassword) {
-                        passwordError = "Passwords do not match."
-                    } else {
-                        passwordError = null
-                        viewModel.register(email, password)
-                    }
-                }) {
-                    Text("Register")
-                }
-            }
+        if (!errorMessage.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = errorMessage,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium
+            )
         }
 
-        TextButton(onClick = onNavigateToLogin) {
-            Text("Already have an account? Login")
-        }
+        Spacer(Modifier.height(8.dp))
+        TextButton(onClick = onNavigateToLogin) { Text("已有账号？去登录") }
     }
+
+    // LaunchedEffect 已被移至 MainActivity/AuthNavigation 中
 }
