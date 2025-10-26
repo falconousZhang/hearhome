@@ -7,5 +7,7 @@ import androidx.room.PrimaryKey
 data class User(
     @PrimaryKey(autoGenerate = true) val uid: Int = 0,
     val email: String,
-    val password: String // Reminder: This should be a hash in a real app
+    val password: String, // Reminder: This should be a hash in a real app
+    val secQuestion: String = "",
+    val secAnswerHash: String = ""
 )
