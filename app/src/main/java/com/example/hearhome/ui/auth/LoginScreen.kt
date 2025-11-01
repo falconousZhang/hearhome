@@ -75,7 +75,8 @@ fun LoginScreen(
             viewModel = viewModel,
             onDismiss = {
                 showResetDialog = false
-                viewModel.resetAuthState()
+                // [修复] 调用正确的函数名
+                viewModel.resetAuthResult()
             }
         )
     }
@@ -111,7 +112,7 @@ private fun ForgotPasswordDialog(
                     1 -> {
                         OutlinedTextField(
                             value = resetEmail,
-                            onValueChange = { resetEmail = it; viewModel.resetAuthState() },
+                            onValueChange = { resetEmail = it; viewModel.resetAuthResult() },
                             label = { Text("注册邮箱") },
                             isError = globalError != null,
                             modifier = Modifier.fillMaxWidth()
