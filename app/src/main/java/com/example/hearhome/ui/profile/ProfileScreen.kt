@@ -1,24 +1,27 @@
 package com.example.hearhome.ui.profile
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf // <-- [新] 导入
-import androidx.compose.runtime.remember // <-- [新] 导入
-import androidx.compose.runtime.setValue // <-- [新] 导入
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.ui.auth.AuthViewModel
-import com.example.hearhome.ui.components.AppBottomNavigation // <-- [新] 导入
+import com.example.hearhome.ui.components.AppBottomNavigation
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -27,39 +30,79 @@ fun ProfileScreen(
     authViewModel: AuthViewModel,
     userId: Int
 ) {
-    // ... ViewModel 和 State 的设置保持不变 ...
     val profileViewModel: ProfileViewModel = viewModel(
-        factory = ProfileViewModelFactory(
-            AppDatabase.getInstance(navController.context).userDao()
-        )
+        factory = ProfileViewModelFactory(AppDatabase.getInstance(LocalContext.current).userDao())
     )
     LaunchedEffect(userId) { profileViewModel.loadUser(userId) }
     val uiState by profileViewModel.uiState.collectAsState()
     val user = uiState.user
 
-    // --- [新] 用于控制退出登录确认框的状态 (Request 2) ---
+    var oldPassword by remember { mutableStateOf("") }
+    var securityAnswerForPasswordChange by remember { mutableStateOf("") }
+    var newPassword by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    
+    var securityQuestion by remember { mutableStateOf("") }
+    var securityAnswerForSQ by remember { mutableStateOf("") }
+    var passwordForSQ by remember { mutableStateOf("") }
+    
+    var userIdVisible by remember { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
 
-    // --- [新] 如果 showLogoutDialog 为 true，则显示弹窗 (Request 2) ---
+    // --- [新] 用于密码可见性的状态 ---
+    var oldPasswordVisible by remember { mutableStateOf(false) }
+    var newPasswordVisible by remember { mutableStateOf(false) }
+    var confirmPasswordVisible by remember { mutableStateOf(false) }
+    var passwordForSQVisible by remember { mutableStateOf(false) }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val authState by authViewModel.authState.collectAsState()
+
+    LaunchedEffect(user) {
+        if (user != null) {
+            securityQuestion = user.secQuestion
+        }
+    }
+
+    // [最终修复] 重写状态处理逻辑
+    LaunchedEffect(authState) {
+        when (val state = authState) {
+            is AuthViewModel.AuthState.Error -> {
+                // 当发生任何错误（密码太短、答案错误等），只显示提示，不跳转
+                scope.launch { snackbarHostState.showSnackbar(state.message) }
+                // 告诉ViewModel错误已处理，返回等待输入的状态
+                authViewModel.onProfileEventConsumed()
+            }
+            is AuthViewModel.AuthState.UpdateSuccess -> {
+                // 当私密问题更新成功时，显示提示并清空输入框
+                scope.launch { snackbarHostState.showSnackbar("私密问题更新成功！") }
+                securityAnswerForSQ = ""
+                passwordForSQ = ""
+                authViewModel.onProfileEventConsumed()
+            }
+            is AuthViewModel.AuthState.PasswordUpdateSuccess -> {
+                // 当密码更新成功时，显示提示，全局导航会自动处理跳转
+                scope.launch { snackbarHostState.showSnackbar("密码修改成功，请重新登录") }
+            }
+            else -> {
+                // 其他状态（如Idle, Loading, Success等）在此页面无需处理
+            }
+        }
+    }
+
     if (showLogoutDialog) {
         LogoutConfirmationDialog(
-            onConfirm = {
-                authViewModel.logout()
-                showLogoutDialog = false
-            },
-            onDismiss = {
-                showLogoutDialog = false
-            }
+            onConfirm = { authViewModel.logout(); showLogoutDialog = false },
+            onDismiss = { showLogoutDialog = false }
         )
     }
 
     Scaffold(
-        // [修改] 移除 TopAppBar
-
-        // --- [新] 添加底部导航栏 (Request 1) ---
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             AppBottomNavigation(
-                currentRoute = "profile", // 告诉导航栏当前是“个人中心”
+                currentRoute = "profile",
                 navController = navController,
                 userId = userId
             )
@@ -69,92 +112,164 @@ fun ProfileScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // ... 用户信息区域 (InfoCard 等) 保持不变 ...
             if (uiState.isLoading) {
+                Spacer(modifier = Modifier.weight(1f))
                 CircularProgressIndicator()
+                Spacer(modifier = Modifier.weight(1f))
             } else if (user != null) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
+                Text("个人信息", style = MaterialTheme.typography.headlineMedium)
+                Spacer(modifier = Modifier.height(16.dp))
+                InfoCard(label = "邮箱", value = user.email)
+                InfoCard(
+                    label = "用户ID",
+                    value = if (userIdVisible) user.uid.toString() else "********",
+                    trailingIcon = {
+                        IconButton(onClick = { userIdVisible = !userIdVisible }) {
+                            Icon(
+                                imageVector = if (userIdVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                                contentDescription = "切换ID可见性"
+                            )
+                        }
+                    }
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+                Text("修改密码", style = MaterialTheme.typography.headlineSmall)
+                
+                // --- [修改] 旧密码输入框 ---
+                OutlinedTextField(
+                    value = oldPassword, 
+                    onValueChange = { oldPassword = it }, 
+                    label = { Text("旧密码") }, 
+                    visualTransformation = if (oldPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(), 
+                    trailingIcon = {
+                        IconButton(onClick = { oldPasswordVisible = !oldPasswordVisible }) {
+                            Icon(imageVector = if (oldPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility")
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
-                ) {
-                    Spacer(modifier = Modifier.height(32.dp))
-                    Text(
-                        text = "个人信息",
-                        style = MaterialTheme.typography.headlineMedium
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    InfoCard(label = "邮箱", value = user.email)
-                    InfoCard(label = "用户ID", value = user.uid.toString())
-                }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(value = securityAnswerForPasswordChange, onValueChange = { securityAnswerForPasswordChange = it }, label = { Text("安全问题: ${user.secQuestion}") }, placeholder = { Text("请输入答案") }, modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(8.dp))
+                // --- [修改] 新密码输入框 ---
+                OutlinedTextField(
+                    value = newPassword, 
+                    onValueChange = { newPassword = it }, 
+                    label = { Text("新密码") }, 
+                    visualTransformation = if (newPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(), 
+                    trailingIcon = {
+                        IconButton(onClick = { newPasswordVisible = !newPasswordVisible }) {
+                            Icon(imageVector = if (newPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                // --- [修改] 确认新密码输入框 ---
+                OutlinedTextField(
+                    value = confirmPassword, 
+                    onValueChange = { confirmPassword = it }, 
+                    label = { Text("确认新密码") }, 
+                    visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(), 
+                    trailingIcon = {
+                        IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) {
+                            Icon(imageVector = if (confirmPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = { 
+                        authViewModel.updatePassword(
+                            email = user.email, 
+                            oldPassword = oldPassword,
+                            securityAnswer = securityAnswerForPasswordChange, 
+                            newPassword = newPassword, 
+                            confirmPassword = confirmPassword
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("确认修改密码") }
+
+                Spacer(modifier = Modifier.height(32.dp))
+                Text("设置私密问题", style = MaterialTheme.typography.headlineSmall)
+                // --- [修改] 当前密码输入框 ---
+                OutlinedTextField(
+                    value = passwordForSQ, 
+                    onValueChange = { passwordForSQ = it }, 
+                    label = { Text("当前密码") }, 
+                    visualTransformation = if (passwordForSQVisible) VisualTransformation.None else PasswordVisualTransformation(), 
+                    trailingIcon = {
+                        IconButton(onClick = { passwordForSQVisible = !passwordForSQVisible }) {
+                            Icon(imageVector = if (passwordForSQVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility")
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(value = securityQuestion, onValueChange = { securityQuestion = it }, label = { Text("新私密问题") }, placeholder = { Text("例如：我最喜欢的颜色是？") }, modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(value = securityAnswerForSQ, onValueChange = { securityAnswerForSQ = it }, label = { Text("新答案") }, modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        authViewModel.updateSecurityQuestion(
+                            email = user.email,
+                            password = passwordForSQ,
+                            question = securityQuestion,
+                            answer = securityAnswerForSQ
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("保存私密问题") }
+                
+                Spacer(modifier = Modifier.height(32.dp))
+
+                Button(
+                    onClick = { showLogoutDialog = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("退出登录") }
+
             } else {
+                Spacer(modifier = Modifier.weight(1f))
                 Text("无法加载用户信息。")
-            }
-
-            // --- [修改] 退出登录按钮的行为 (Request 2) ---
-            Button(
-                onClick = {
-                    // 点击按钮时，显示确认框，而不是直接退出
-                    showLogoutDialog = true
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp)
-            ) {
-                Text("退出登录")
+                Spacer(modifier = Modifier.weight(1f))
             }
         }
     }
 }
 
-// ... InfoCard(...) Composable 保持不变 ...
 @Composable
-private fun InfoCard(label: String, value: String) {
-    // (代码与之前相同)
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.Gray
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyLarge,
-                fontSize = 18.sp
-            )
+private fun InfoCard(label: String, value: String, trailingIcon: @Composable (() -> Unit)? = null) {
+    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 16.dp, bottom = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column {
+                Text(text = label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                Text(text = value, style = MaterialTheme.typography.bodyLarge, fontSize = 18.sp)
+            }
+            trailingIcon?.invoke()
         }
     }
 }
 
-// --- [新] 退出登录确认弹窗 (Request 2) ---
 @Composable
-private fun LogoutConfirmationDialog(
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
+private fun LogoutConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("退出登录") },
         text = { Text("您确定要退出登录吗？") },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("确定")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
+        confirmButton = { TextButton(onClick = onConfirm) { Text("确定") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
 }
