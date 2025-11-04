@@ -9,34 +9,35 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.example.hearhome.ui.components.AppBottomNavigation
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     navController: NavController,
-    userId: Int // 我们将从导航中获取用户ID
+    userId: Int
 ) {
     Scaffold(
         bottomBar = {
             AppBottomNavigation(
-                currentRoute = "home", // 告诉导航栏当前是“主页”
+                currentRoute = "home",
                 navController = navController,
                 userId = userId
             )
         }
     ) { innerPadding ->
-        Column(
+        // ✅ 页面主体：只有一个“查找用户”按钮
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(innerPadding),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "欢迎！你已登录。",
-                style = MaterialTheme.typography.headlineSmall
-            )
-
+            Button(
+                onClick = { navController.navigate("search/$userId") },
+                modifier = Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(50.dp)
+            ) {
+                Text("查找用户")
+            }
         }
     }
 }

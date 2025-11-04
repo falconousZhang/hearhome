@@ -7,34 +7,109 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+/**
+ * 应用主数据库
+ * 管理用户表、好友表、情侣表以及数据库升级
+ */
 @Database(
-    entities = [User::class],
-    version = 2,             // 数据库版本升级到 2
+    entities = [User::class, Friend::class, Couple::class],
+    version = 6,  // ⚠️ 数据库版本号提升到 6
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
+
+    // 各 DAO 接口
     abstract fun userDao(): UserDao
+    abstract fun friendDao(): FriendDao
+    abstract fun coupleDao(): CoupleDao
 
     companion object {
-        @Volatile private var INSTANCE: AppDatabase? = null
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
 
-        // [新] 数据库迁移：从版本 1 升级到 2
+        /**
+         * -------------------------------
+         * 数据库迁移逻辑（防止升级后数据丢失）
+         * -------------------------------
+         */
+
+        // 1 → 2：添加密保字段
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 为 'users' 表添加安全问题和答案哈希列
                 db.execSQL("ALTER TABLE users ADD COLUMN secQuestion TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE users ADD COLUMN secAnswerHash TEXT NOT NULL DEFAULT ''")
             }
         }
 
+        // 2 → 3：添加昵称、关系状态、情侣绑定
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE users ADD COLUMN nickname TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE users ADD COLUMN relationshipStatus TEXT NOT NULL DEFAULT 'single'")
+                db.execSQL("ALTER TABLE users ADD COLUMN partnerId INTEGER")
+            }
+        }
+
+        // 3 → 4：创建好友表
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS friends (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        senderId INTEGER NOT NULL,
+                        receiverId INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        // 4 → 5：创建情侣表
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS couples (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        requesterId INTEGER NOT NULL,
+                        partnerId INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
+        // 5 → 6: 为 couples 表添加备注字段
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE couples ADD COLUMN requesterRemark TEXT")
+                db.execSQL("ALTER TABLE couples ADD COLUMN partnerRemark TEXT")
+            }
+        }
+
+        /**
+         * 获取数据库单例
+         */
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "app.db" // 你的数据库名称
+                    "app.db" // 数据库文件名
                 )
-                    .addMigrations(MIGRATION_1_2) // [新] 添加迁移
+                    // 注册所有迁移
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6
+                    )
                     .build()
                     .also { INSTANCE = it }
             }
