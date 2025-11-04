@@ -5,11 +5,11 @@ import androidx.room.Insert
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
-
 @Dao
 interface UserDao {
+
     @Insert
-    suspend fun insert(user: User):Long
+    suspend fun insert(user: User): Long
 
     @Query("SELECT * FROM users WHERE email = :email LIMIT 1")
     suspend fun findByEmail(email: String): User?
@@ -25,6 +25,20 @@ interface UserDao {
 
     @Query("SELECT secQuestion AS question, secAnswerHash AS answerHash FROM users WHERE email = :email LIMIT 1")
     suspend fun getSecurityQA(email: String): SecurityQA?
+
+    // ✅ 改为仅支持通过 ID 或昵称 搜索（去掉邮箱搜索）
+    @Query("""
+        SELECT * FROM users 
+        WHERE CAST(uid AS TEXT) LIKE '%' || :keyword || '%' 
+           OR nickname LIKE '%' || :keyword || '%'
+    """)
+    suspend fun searchUsers(keyword: String): List<User>
+
+    @Query("SELECT * FROM users WHERE uid IN (:ids)")
+    fun getUsersByIds(ids: List<Int>): List<User>
+
+    @Query("SELECT * FROM users WHERE uid = :id LIMIT 1")
+    fun getUserById(id: Int): User?
 
     data class SecurityQA(
         val question: String,
