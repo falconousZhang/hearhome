@@ -39,7 +39,7 @@ interface CoupleDao {
     @Query("SELECT * FROM couples WHERE (requesterId = :userId OR partnerId = :userId) AND status = 'accepted' LIMIT 1")
     suspend fun getCurrentCouple(userId: Int): Couple?
 
-    // ✅ 新增：查询两人之间是否存在任何情侣关系（无论状态）
+    // 查询两人之间是否存在任何情侣关系（无论状态）
     @Query("SELECT * FROM couples WHERE (requesterId = :userA AND partnerId = :userB) OR (requesterId = :userB AND partnerId = :userA) LIMIT 1")
     suspend fun getCoupleRelationship(userA: Int, userB: Int): Couple?
 }

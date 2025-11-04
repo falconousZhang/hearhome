@@ -128,7 +128,10 @@ fun CoupleRequestsScreen(
                                         scope.launch {
                                             withContext(Dispatchers.IO) {
                                                 coupleDao.acceptRequest(info.request.id)
-                                                //TODO:可能需要拒绝其他所有申请
+                                                // 更新双方状态
+                                                val requesterId = info.requester.uid
+                                                userDao.updateRelationshipStatus(currentUserId, "in_relationship", requesterId)
+                                                userDao.updateRelationshipStatus(requesterId, "in_relationship", currentUserId)
                                             }
                                             Toast.makeText(context, "已接受情侣申请", Toast.LENGTH_SHORT).show()
                                             refreshRequests()
