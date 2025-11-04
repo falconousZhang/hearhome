@@ -26,7 +26,6 @@ interface UserDao {
     @Query("SELECT secQuestion AS question, secAnswerHash AS answerHash FROM users WHERE email = :email LIMIT 1")
     suspend fun getSecurityQA(email: String): SecurityQA?
 
-    // ✅ 改为仅支持通过 ID 或昵称 搜索（去掉邮箱搜索）
     @Query("""
         SELECT * FROM users 
         WHERE CAST(uid AS TEXT) LIKE '%' || :keyword || '%' 
@@ -38,7 +37,10 @@ interface UserDao {
     fun getUsersByIds(ids: List<Int>): List<User>
 
     @Query("SELECT * FROM users WHERE uid = :id LIMIT 1")
-    fun getUserById(id: Int): User?
+    suspend fun getUserById(id: Int): User?
+
+    @Query("UPDATE users SET relationshipStatus = :status, partnerId = :partnerId WHERE uid = :userId")
+    suspend fun updateRelationshipStatus(userId: Int, status: String, partnerId: Int?)
 
     data class SecurityQA(
         val question: String,

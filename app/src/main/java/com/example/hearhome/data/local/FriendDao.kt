@@ -3,6 +3,7 @@ package com.example.hearhome.data.local
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 
 /**
@@ -50,4 +51,9 @@ interface FriendDao {
     // 删除好友
     @Query("DELETE FROM friends WHERE (senderId = :userId1 AND receiverId = :userId2) OR (senderId = :userId2 AND receiverId = :userId1) AND status = 'accepted'")
     suspend fun deleteFriend(userId1: Int, userId2: Int)
+
+    // 获取好友及用户信息
+    @Transaction
+    @Query("SELECT * FROM friends WHERE (senderId = :userId OR receiverId = :userId) AND status = 'accepted'")
+    suspend fun getAcceptedFriendsWithUsers(userId: Int): List<FriendWithUser>
 }

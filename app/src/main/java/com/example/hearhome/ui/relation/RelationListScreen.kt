@@ -104,7 +104,7 @@ fun RelationListScreen(
     fun refreshData() {
         scope.launch {
             withContext(Dispatchers.IO) {
-                val friendEntities = friendDao.getFriendsOf(currentUserId)
+                val friendEntities = friendDao.getAcceptedFriends(currentUserId)
                 friends = friendEntities.mapNotNull { friend ->
                     val friendId = if (friend.senderId == currentUserId) friend.receiverId else friend.senderId
                     userDao.getUserById(friendId)?.let { user -> FriendInfo(user, friend) }
@@ -140,7 +140,7 @@ fun RelationListScreen(
         val userGender = currentUser?.gender
         if (userGender == "男" || userGender == "女") {
             val oppositeGender = if (userGender == "男") "女" else "男"
-            friends.filter { it.user.gender == oppositeGender }
+            friends.filter { it.user.gender == oppositeGender && it.user.relationshipStatus == "single" }
         } else {
             emptyList()
         }
@@ -159,6 +159,12 @@ fun RelationListScreen(
                         scope.launch {
                             withContext(Dispatchers.IO) {
                                 coupleDao.deleteRelationship(currentUserId)
+                                 // 更新双方状态
+                                val partnerId = coupleInfo?.user?.uid
+                                userDao.updateRelationshipStatus(currentUserId, "single", null)
+                                if (partnerId != null) {
+                                    userDao.updateRelationshipStatus(partnerId, "single", null)
+                                }
                             }
                             showDeleteCoupleDialog = false
                             snackbarHostState.showSnackbar("已解除情侣关系")
@@ -272,7 +278,7 @@ fun RelationListScreen(
             title = { Text("选择一个对象") },
             text = {
                 if (potentialPartners.isEmpty()) {
-                    Text("没有可供选择的异性好友。")
+                    Text("没有可供选择的单身异性好友。")
                 } else {
                     LazyColumn {
                         items(items = potentialPartners, key = { it.user.uid }) { info ->
@@ -284,7 +290,7 @@ fun RelationListScreen(
                                             val newCoupleRequest = Couple(
                                                 requesterId = currentUserId,
                                                 partnerId = info.user.uid,
-                                                status = "pending"
+                                                createdAt = System.currentTimeMillis()
                                             )
                                             withContext(Dispatchers.IO) {
                                                 coupleDao.insertRequest(newCoupleRequest)

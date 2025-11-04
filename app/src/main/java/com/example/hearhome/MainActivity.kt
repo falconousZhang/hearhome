@@ -21,6 +21,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.ui.auth.*
+import com.example.hearhome.ui.chat.ChatScreen
 import com.example.hearhome.ui.friend.FriendRequestsScreen
 import com.example.hearhome.ui.home.HomeScreen
 import com.example.hearhome.ui.profile.ProfileScreen
@@ -126,6 +127,18 @@ fun AuthNavigation() {
             CoupleRequestsScreen(navController, userId)
         }
 
+        composable(
+            route = "chat/{currentUserId}/{friendUserId}",
+            arguments = listOf(
+                navArgument("currentUserId") { type = NavType.IntType },
+                navArgument("friendUserId") { type = NavType.IntType }
+            )
+        ) {
+            val currentUserId = it.arguments?.getInt("currentUserId") ?: return@composable
+            val friendUserId = it.arguments?.getInt("friendUserId") ?: return@composable
+            ChatScreen(navController, currentUserId, friendUserId)
+        }
+
     }
 }
 
@@ -166,4 +179,3 @@ private fun handleGlobalNavigation(
         else -> {}
     }
 }
-
