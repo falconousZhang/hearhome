@@ -23,7 +23,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PostLike::class,
         PostComment::class
     ],
-    version = 8
+    version = 8,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
