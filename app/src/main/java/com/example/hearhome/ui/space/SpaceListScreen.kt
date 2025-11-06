@@ -125,7 +125,7 @@ fun SpaceListScreen(
                         SpaceCard(
                             space = space,
                             onClick = {
-                                navController.navigate("space_detail/${space.id}")
+                                navController.navigate("space_detail/${space.id}/$currentUserId")
                             }
                         )
                     }

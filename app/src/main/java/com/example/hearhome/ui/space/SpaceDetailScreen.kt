@@ -65,6 +65,7 @@ fun SpaceDetailScreen(
         factory = SpacePostViewModelFactory(
             db.spacePostDao(),
             db.userDao(),
+            db.postFavoriteDao(),
             spaceId,
             currentUserId,
             context
@@ -114,7 +115,7 @@ fun SpaceDetailScreen(
                                 text = { Text("空间信息") },
                                 onClick = {
                                     showMoreMenu = false
-                                    navController.navigate("space_info/$spaceId")
+                                    navController.navigate("space_info/$spaceId/$currentUserId")
                                 }
                             )
                             // 显示成员管理选项（管理员和所有者可见）
@@ -124,7 +125,7 @@ fun SpaceDetailScreen(
                                     text = { Text("成员管理") },
                                     onClick = {
                                         showMoreMenu = false
-                                        navController.navigate("space_manage/$spaceId")
+                                        navController.navigate("space_manage/$spaceId/$currentUserId")
                                     }
                                 )
                             }
@@ -182,11 +183,16 @@ fun SpaceDetailScreen(
                             }
                         },
                         onComment = {
-                            navController.navigate("post_detail/${postInfo.post.id}")
+                            navController.navigate("post_detail/${postInfo.post.id}/$currentUserId")
                         },
                         onDelete = {
                             scope.launch {
                                 postViewModel.deletePost(postInfo.post.id)
+                            }
+                        },
+                        onFavorite = {
+                            scope.launch {
+                                postViewModel.toggleFavorite(postInfo.post.id)
                             }
                         }
                     )
@@ -276,7 +282,8 @@ fun PostCard(
     currentUserId: Int,
     onLike: () -> Unit,
     onComment: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onFavorite: () -> Unit = {}
 ) {
     val post = postInfo.post
     val author = postInfo.author
@@ -402,6 +409,17 @@ fun PostCard(
                     Icon(Icons.Default.Comment, "评论")
                     Spacer(Modifier.width(4.dp))
                     Text("${post.commentCount}")
+                }
+                
+                // 收藏
+                TextButton(onClick = onFavorite) {
+                    Icon(
+                        imageVector = if (postInfo.hasFavorited) Icons.Filled.Star else Icons.Default.StarBorder,
+                        contentDescription = "收藏",
+                        tint = if (postInfo.hasFavorited) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (postInfo.hasFavorited) "已收藏" else "收藏")
                 }
             }
         }

@@ -160,43 +160,50 @@ fun AuthNavigation() {
         }
         
         composable(
-            route = "space_detail/{spaceId}",
-            arguments = listOf(navArgument("spaceId") { type = NavType.IntType })
+            route = "space_detail/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
         ) {
             val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
-            // 从 backStackEntry 获取 userId
-            val userId = navController.previousBackStackEntry
-                ?.arguments?.getInt("userId") ?: 0
+            val userId = it.arguments?.getInt("userId") ?: return@composable
             SpaceDetailScreen(navController, spaceId, userId)
         }
         
         composable(
-            route = "post_detail/{postId}",
-            arguments = listOf(navArgument("postId") { type = NavType.IntType })
+            route = "post_detail/{postId}/{userId}",
+            arguments = listOf(
+                navArgument("postId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
         ) {
             val postId = it.arguments?.getInt("postId") ?: return@composable
-            val userId = navController.previousBackStackEntry
-                ?.arguments?.getInt("userId") ?: 0
+            val userId = it.arguments?.getInt("userId") ?: return@composable
             PostDetailScreen(navController, postId, userId)
         }
         
         composable(
-            route = "space_manage/{spaceId}",
-            arguments = listOf(navArgument("spaceId") { type = NavType.IntType })
+            route = "space_manage/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
         ) {
             val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
-            val userId = navController.previousBackStackEntry
-                ?.arguments?.getInt("userId") ?: 0
+            val userId = it.arguments?.getInt("userId") ?: return@composable
             SpaceManageScreen(navController, spaceId, userId)
         }
         
         composable(
-            route = "space_info/{spaceId}",
-            arguments = listOf(navArgument("spaceId") { type = NavType.IntType })
+            route = "space_info/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
         ) {
             val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
-            val userId = navController.previousBackStackEntry
-                ?.arguments?.getInt("userId") ?: 0
+            val userId = it.arguments?.getInt("userId") ?: return@composable
             SpaceInfoScreen(navController, spaceId, userId)
         }
 
