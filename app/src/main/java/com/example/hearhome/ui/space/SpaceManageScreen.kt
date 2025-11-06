@@ -56,13 +56,51 @@ fun SpaceManageScreen(
         viewModel.selectSpace(spaceId)
     }
     
-    // 权限检查
-    if (currentUserRole != "admin") {
+    // 加载中状态
+    if (currentUserRole == null) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            Text("无权限访问", color = MaterialTheme.colorScheme.error)
+            CircularProgressIndicator()
+        }
+        return
+    }
+    
+    // 权限检查
+    if (currentUserRole != "admin") {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("空间管理") },
+                    navigationIcon = {
+                        IconButton(onClick = { navController.navigateUp() }) {
+                            Icon(Icons.Default.ArrowBack, "返回")
+                        }
+                    }
+                )
+            }
+        ) { padding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "无权限访问",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "只有管理员可以管理空间",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
         return
     }

@@ -32,6 +32,7 @@ import com.example.hearhome.ui.space.SpaceListScreen
 import com.example.hearhome.ui.space.SpaceDetailScreen
 import com.example.hearhome.ui.space.PostDetailScreen
 import com.example.hearhome.ui.space.SpaceManageScreen
+import com.example.hearhome.ui.space.SpaceInfoScreen
 import com.example.hearhome.ui.theme.HearHomeTheme
 
 class MainActivity : ComponentActivity() {
@@ -182,6 +183,16 @@ fun AuthNavigation() {
             val userId = navController.previousBackStackEntry
                 ?.arguments?.getInt("userId") ?: 0
             SpaceManageScreen(navController, spaceId, userId)
+        }
+        
+        composable(
+            route = "space_info/{spaceId}",
+            arguments = listOf(navArgument("spaceId") { type = NavType.IntType })
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            val userId = navController.previousBackStackEntry
+                ?.arguments?.getInt("userId") ?: 0
+            SpaceInfoScreen(navController, spaceId, userId)
         }
 
     }

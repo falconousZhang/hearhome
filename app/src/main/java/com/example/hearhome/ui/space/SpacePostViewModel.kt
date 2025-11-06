@@ -121,7 +121,7 @@ class SpacePostViewModel(
     /**
      * 加载某条动态的评论
      */
-    private fun loadComments(postId: Int) {
+    fun loadComments(postId: Int) {
         viewModelScope.launch {
             spacePostDao.getPostComments(postId).collect { commentList ->
                 val commentsWithInfo = commentList.mapNotNull { comment ->
@@ -154,7 +154,7 @@ class SpacePostViewModel(
                 replyToUserId = replyToUserId
             )
             spacePostDao.addCommentWithCount(comment)
-            loadComments(postId)
+            // Flow 会自动更新评论列表，不需要手动调用 loadComments
             loadPosts() // 更新评论数
             true
         } catch (e: Exception) {

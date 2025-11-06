@@ -37,8 +37,7 @@ fun PostDetailScreen(
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
     
-    // 需要先获取post才能知道spaceId,这里简化处理
-    // 实际应用中可以通过参数传递或从post中获取
+    // 需要先获取post才能知道spaceId
     var spaceId by remember { mutableIntStateOf(0) }
     
     LaunchedEffect(postId) {
@@ -59,7 +58,9 @@ fun PostDetailScreen(
         return
     }
     
+    // 使用key让ViewModel在spaceId变化时重新创建
     val viewModel: SpacePostViewModel = viewModel(
+        key = "post_detail_$spaceId",
         factory = SpacePostViewModelFactory(
             db.spacePostDao(),
             db.userDao(),
