@@ -31,6 +31,7 @@ import coil.compose.rememberImagePainter
 import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.ui.components.EmojiTextField
 import com.example.hearhome.utils.ImageUtils
+import com.example.hearhome.utils.TestUtils
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -111,6 +112,19 @@ fun SpaceDetailScreen(
                             expanded = showMoreMenu,
                             onDismissRequest = { showMoreMenu = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { 
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Star, null, Modifier.size(20.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("我的收藏")
+                                    }
+                                },
+                                onClick = {
+                                    showMoreMenu = false
+                                    navController.navigate("favorites/$spaceId/$currentUserId")
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("空间信息") },
                                 onClick = {
@@ -431,6 +445,7 @@ fun CreatePostScreen(
     onDismiss: () -> Unit,
     onPost: (String, List<String>) -> Unit
 ) {
+    val context = LocalContext.current
     var content by remember { mutableStateOf("") }
     var imageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
 
@@ -454,11 +469,31 @@ fun CreatePostScreen(
                     minHeight = 150
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                Button(onClick = { imagePickerLauncher.launch("image/*") }) {
-                    Icon(Icons.Default.AddPhotoAlternate, "添加图片")
-                    Spacer(Modifier.width(4.dp))
-                    Text("添加图片")
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { imagePickerLauncher.launch("image/*") }) {
+                        Icon(Icons.Default.AddPhotoAlternate, "添加图片")
+                        Spacer(Modifier.width(4.dp))
+                        Text("添加图片")
+                    }
+                    
+                    // 测试按钮（仅模拟器显示）
+                    if (TestUtils.isEmulator()) {
+                        OutlinedButton(
+                            onClick = {
+                                val mockImage = TestUtils.createMockImageFile(context)
+                                if (mockImage != null) {
+                                    imageUris = imageUris + Uri.fromFile(mockImage)
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Default.Science, null, Modifier.size(20.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("生成测试图")
+                        }
+                    }
                 }
+                
                 Spacer(modifier = Modifier.height(8.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(imageUris) { uri ->

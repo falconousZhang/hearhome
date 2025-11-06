@@ -24,6 +24,7 @@ import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.ui.components.AudioPlayer
 import com.example.hearhome.ui.components.AudioRecorder
 import com.example.hearhome.ui.components.EmojiTextField
+import com.example.hearhome.utils.TestUtils
 import kotlinx.coroutines.launch
 
 /**
@@ -264,6 +265,21 @@ fun PostDetailScreen(
                             onClick = { showAudioRecorder = true }
                         ) {
                             Icon(Icons.Default.Mic, "语音消息")
+                        }
+                        
+                        // 测试按钮（仅模拟器显示）
+                        if (TestUtils.isEmulator()) {
+                            IconButton(
+                                onClick = {
+                                    val mockPath = TestUtils.createMockAudioFile(context)
+                                    if (mockPath != null) {
+                                        audioPath = mockPath
+                                        audioDuration = TestUtils.getMockAudioDuration()
+                                    }
+                                }
+                            ) {
+                                Icon(Icons.Default.Science, "模拟语音", tint = MaterialTheme.colorScheme.tertiary)
+                            }
                         }
                         
                         // 发送按钮

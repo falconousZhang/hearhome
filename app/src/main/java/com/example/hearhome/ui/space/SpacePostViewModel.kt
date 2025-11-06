@@ -25,6 +25,10 @@ class SpacePostViewModel(
     private val _posts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())
     val posts: StateFlow<List<PostWithAuthorInfo>> = _posts.asStateFlow()
 
+    // 收藏的动态列表
+    private val _favoritePosts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())
+    val favoritePosts: StateFlow<List<PostWithAuthorInfo>> = _favoritePosts.asStateFlow()
+
     // 选中的动态详情
     private val _selectedPost = MutableStateFlow<PostWithAuthorInfo?>(null)
     val selectedPost: StateFlow<PostWithAuthorInfo?> = _selectedPost.asStateFlow()
@@ -276,7 +280,7 @@ class SpacePostViewModel(
                         PostWithAuthorInfo(post, author, hasLiked, hasFavorited = true)
                     } else null
                 }
-                _posts.value = favoritePosts
+                _favoritePosts.value = favoritePosts
             }
         }
     }

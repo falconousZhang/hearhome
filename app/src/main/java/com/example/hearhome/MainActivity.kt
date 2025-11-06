@@ -31,6 +31,7 @@ import com.example.hearhome.ui.search.SearchUserScreen
 import com.example.hearhome.ui.space.SpaceListScreen
 import com.example.hearhome.ui.space.SpaceDetailScreen
 import com.example.hearhome.ui.space.PostDetailScreen
+import com.example.hearhome.ui.space.FavoritesScreen
 import com.example.hearhome.ui.space.SpaceManageScreen
 import com.example.hearhome.ui.space.SpaceInfoScreen
 import com.example.hearhome.ui.theme.HearHomeTheme
@@ -181,6 +182,18 @@ fun AuthNavigation() {
             val postId = it.arguments?.getInt("postId") ?: return@composable
             val userId = it.arguments?.getInt("userId") ?: return@composable
             PostDetailScreen(navController, postId, userId)
+        }
+        
+        composable(
+            route = "favorites/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            FavoritesScreen(navController, spaceId, userId)
         }
         
         composable(
