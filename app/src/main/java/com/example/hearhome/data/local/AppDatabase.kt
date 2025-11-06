@@ -9,11 +9,21 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
  * 应用主数据库
- * 管理用户表、好友表、情侣表以及数据库升级
+ * 管理用户表、好友表、情侣表、消息表以及空间相关表
  */
 @Database(
-    entities = [User::class, Friend::class, Couple::class, Message::class],
-    version = 7,  // ⚠️ 数据库版本号回滚到 7
+    entities = [
+        User::class, 
+        Friend::class, 
+        Couple::class, 
+        Message::class,
+        Space::class,
+        SpaceMember::class,
+        SpacePost::class,
+        PostLike::class,
+        PostComment::class
+    ],
+    version = 8
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -23,6 +33,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun friendDao(): FriendDao
     abstract fun coupleDao(): CoupleDao
     abstract fun messageDao(): MessageDao
+    abstract fun spaceDao(): SpaceDao
+    abstract fun spacePostDao(): SpacePostDao
 
     companion object {
         @Volatile
@@ -68,9 +80,78 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, senderId INTEGER NOT NULL, receiverId INTEGER NOT NULL, content TEXT NOT NULL, timestamp INTEGER NOT NULL, isRead INTEGER NOT NULL DEFAULT 0)")
             }
         }
+        
+        /**
+         * 迁移 7 -> 8: 添加空间相关表
+         */
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE users ADD COLUMN gender TEXT NOT NULL DEFAULT 'Not specified'; ALTER TABLE users ADD COLUMN avatarColor TEXT NOT NULL DEFAULT '#CCCCCC'; ALTER TABLE friends ADD COLUMN senderRemark TEXT; ALTER TABLE friends ADD COLUMN receiverRemark TEXT;")
+                // 创建空间表
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS spaces (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        type TEXT NOT NULL,
+                        description TEXT,
+                        creatorId INTEGER NOT NULL,
+                        inviteCode TEXT NOT NULL,
+                        coverColor TEXT NOT NULL DEFAULT '#FF9800',
+                        createdAt INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'active'
+                    )
+                """.trimIndent())
+                
+                // 创建空间成员表
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS space_members (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        spaceId INTEGER NOT NULL,
+                        userId INTEGER NOT NULL,
+                        role TEXT NOT NULL DEFAULT 'member',
+                        nickname TEXT,
+                        joinedAt INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'active'
+                    )
+                """.trimIndent())
+                
+                // 创建空间动态表
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS space_posts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        spaceId INTEGER NOT NULL,
+                        authorId INTEGER NOT NULL,
+                        content TEXT NOT NULL,
+                        images TEXT,
+                        location TEXT,
+                        timestamp INTEGER NOT NULL,
+                        likeCount INTEGER NOT NULL DEFAULT 0,
+                        commentCount INTEGER NOT NULL DEFAULT 0,
+                        status TEXT NOT NULL DEFAULT 'normal'
+                    )
+                """.trimIndent())
+                
+                // 创建动态点赞表
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS post_likes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        postId INTEGER NOT NULL,
+                        userId INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                
+                // 创建动态评论表
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS post_comments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        postId INTEGER NOT NULL,
+                        authorId INTEGER NOT NULL,
+                        content TEXT NOT NULL,
+                        replyToUserId INTEGER,
+                        timestamp INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'normal'
+                    )
+                """.trimIndent())
             }
         }
 

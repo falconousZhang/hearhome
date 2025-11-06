@@ -28,6 +28,10 @@ import com.example.hearhome.ui.profile.ProfileScreen
 import com.example.hearhome.ui.relation.CoupleRequestsScreen
 import com.example.hearhome.ui.relation.RelationListScreen
 import com.example.hearhome.ui.search.SearchUserScreen
+import com.example.hearhome.ui.space.SpaceListScreen
+import com.example.hearhome.ui.space.SpaceDetailScreen
+import com.example.hearhome.ui.space.PostDetailScreen
+import com.example.hearhome.ui.space.SpaceManageScreen
 import com.example.hearhome.ui.theme.HearHomeTheme
 
 class MainActivity : ComponentActivity() {
@@ -137,6 +141,47 @@ fun AuthNavigation() {
             val currentUserId = it.arguments?.getInt("currentUserId") ?: return@composable
             val friendUserId = it.arguments?.getInt("friendUserId") ?: return@composable
             ChatScreen(navController, currentUserId, friendUserId)
+        }
+        
+        // ==================== 空间相关路由 ====================
+        
+        composable(
+            route = "space_list/{userId}",
+            arguments = listOf(navArgument("userId") { type = NavType.IntType })
+        ) {
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            SpaceListScreen(navController, userId)
+        }
+        
+        composable(
+            route = "space_detail/{spaceId}",
+            arguments = listOf(navArgument("spaceId") { type = NavType.IntType })
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            // 从 backStackEntry 获取 userId
+            val userId = navController.previousBackStackEntry
+                ?.arguments?.getInt("userId") ?: 0
+            SpaceDetailScreen(navController, spaceId, userId)
+        }
+        
+        composable(
+            route = "post_detail/{postId}",
+            arguments = listOf(navArgument("postId") { type = NavType.IntType })
+        ) {
+            val postId = it.arguments?.getInt("postId") ?: return@composable
+            val userId = navController.previousBackStackEntry
+                ?.arguments?.getInt("userId") ?: 0
+            PostDetailScreen(navController, postId, userId)
+        }
+        
+        composable(
+            route = "space_manage/{spaceId}",
+            arguments = listOf(navArgument("spaceId") { type = NavType.IntType })
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            val userId = navController.previousBackStackEntry
+                ?.arguments?.getInt("userId") ?: 0
+            SpaceManageScreen(navController, spaceId, userId)
         }
 
     }
