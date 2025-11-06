@@ -21,6 +21,8 @@ import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.ui.components.AudioPlayer
+import com.example.hearhome.ui.components.AudioRecorder
 import com.example.hearhome.ui.components.EmojiTextField
 import kotlinx.coroutines.launch
 
@@ -65,6 +67,7 @@ fun PostDetailScreen(
         factory = SpacePostViewModelFactory(
             db.spacePostDao(),
             db.userDao(),
+            db.postFavoriteDao(),
             spaceId,
             currentUserId,
             context
@@ -77,6 +80,9 @@ fun PostDetailScreen(
     
     var commentText by remember { mutableStateOf("") }
     var replyToUser by remember { mutableStateOf<CommentInfo?>(null) }
+    var showAudioRecorder by remember { mutableStateOf(false) }
+    var audioPath by remember { mutableStateOf<String?>(null) }
+    var audioDuration by remember { mutableLongStateOf(0L) }
     
     LaunchedEffect(postId) {
         viewModel.selectPost(postId)
@@ -123,6 +129,11 @@ fun PostDetailScreen(
                                 scope.launch {
                                     viewModel.deletePost(postInfo.post.id)
                                     navController.navigateUp()
+                                }
+                            },
+                            onFavorite = {
+                                scope.launch {
+                                    viewModel.toggleFavorite(postInfo.post.id)
                                 }
                             }
                         )
@@ -182,66 +193,119 @@ fun PostDetailScreen(
                 shadowElevation = 8.dp,
                 tonalElevation = 3.dp
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(16.dp)
                 ) {
-                    // 显示回复目标
-                    if (replyToUser != null) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "回复 @${replyToUser?.author?.nickname}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
+                    // 显示已录制的语音
+                    if (audioPath != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AudioPlayer(
+                                audioPath = audioPath!!,
+                                duration = audioDuration,
+                                modifier = Modifier.weight(1f)
                             )
+                            IconButton(
+                                onClick = {
+                                    audioPath = null
+                                    audioDuration = 0L
+                                }
+                            ) {
+                                Icon(Icons.Default.Close, "删除语音")
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // 显示回复目标
+                        if (replyToUser != null) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "回复 @${replyToUser?.author?.nickname}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                EmojiTextField(
+                                    value = commentText,
+                                    onValueChange = { commentText = it },
+                                    label = "回复内容",
+                                    placeholder = "说点什么...",
+                                    maxLines = 3,
+                                    minHeight = 60
+                                )
+                            }
+                            IconButton(onClick = { replyToUser = null }) {
+                                Icon(Icons.Default.Close, "取消回复")
+                            }
+                        } else {
                             EmojiTextField(
                                 value = commentText,
                                 onValueChange = { commentText = it },
-                                label = "回复内容",
+                                modifier = Modifier.weight(1f),
+                                label = "评论",
                                 placeholder = "说点什么...",
                                 maxLines = 3,
                                 minHeight = 60
                             )
                         }
-                        IconButton(onClick = { replyToUser = null }) {
-                            Icon(Icons.Default.Close, "取消回复")
+                        
+                        Spacer(Modifier.width(8.dp))
+                        
+                        // 语音按钮
+                        IconButton(
+                            onClick = { showAudioRecorder = true }
+                        ) {
+                            Icon(Icons.Default.Mic, "语音消息")
                         }
-                    } else {
-                        EmojiTextField(
-                            value = commentText,
-                            onValueChange = { commentText = it },
-                            modifier = Modifier.weight(1f),
-                            label = "评论",
-                            placeholder = "说点什么...",
-                            maxLines = 3,
-                            minHeight = 60
-                        )
-                    }
-                    
-                    Spacer(Modifier.width(8.dp))
-                    
-                    Button(
-                        onClick = {
-                            if (commentText.isNotBlank()) {
-                                scope.launch {
-                                    viewModel.addComment(
-                                        postId = postId,
-                                        content = commentText,
-                                        replyToUserId = replyToUser?.author?.uid
-                                    )
-                                    commentText = ""
-                                    replyToUser = null
+                        
+                        // 发送按钮
+                        Button(
+                            onClick = {
+                                if (commentText.isNotBlank() || audioPath != null) {
+                                    scope.launch {
+                                        viewModel.addComment(
+                                            postId = postId,
+                                            content = commentText.ifBlank { "[语音消息]" },
+                                            replyToUserId = replyToUser?.author?.uid,
+                                            audioPath = audioPath,
+                                            audioDuration = audioDuration
+                                        )
+                                        commentText = ""
+                                        audioPath = null
+                                        audioDuration = 0L
+                                        replyToUser = null
+                                    }
                                 }
-                            }
-                        },
-                        enabled = commentText.isNotBlank()
-                    ) {
-                        Text("发送")
+                            },
+                            enabled = commentText.isNotBlank() || audioPath != null
+                        ) {
+                            Text("发送")
+                        }
                     }
                 }
             }
+        }
+        
+        // 语音录制对话框
+        if (showAudioRecorder) {
+            AudioRecorder(
+                onAudioRecorded = { path, duration ->
+                    audioPath = path
+                    audioDuration = duration
+                    showAudioRecorder = false
+                },
+                onDismiss = {
+                    showAudioRecorder = false
+                }
+            )
         }
     }
 }
@@ -314,6 +378,16 @@ fun CommentItem(
             }
             
             Spacer(Modifier.height(8.dp))
+            
+            // 显示语音消息
+            if (comment.audioPath != null && comment.audioDuration != null) {
+                AudioPlayer(
+                    audioPath = comment.audioPath!!,
+                    duration = comment.audioDuration!!,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+            }
             
             // 显示回复对象
             if (replyToUser != null) {

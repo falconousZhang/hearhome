@@ -1,5 +1,6 @@
 package com.example.hearhome.utils
 
+import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Properties
@@ -11,46 +12,60 @@ import javax.mail.internet.MimeMessage
  * 邮件发送工具类
  * 用于发送通知邮件
  * 
- * 注意：需要在 build.gradle 中添加 JavaMail 依赖：
+ * 安全改进：
+ * - 使用加密存储管理邮箱密码
+ * - 支持从安全配置中读取SMTP设置
+ * - 不在代码中硬编码敏感信息
+ * 
+ * 注意：需要在 build.gradle 中添加以下依赖：
  * implementation("com.sun.mail:android-mail:1.6.7")
  * implementation("com.sun.mail:android-activation:1.6.7")
+ * implementation("androidx.security:security-crypto:1.1.0-alpha06")
  */
 object EmailHelper {
     
-    // 邮件服务器配置（这里使用示例配置，实际使用时需要替换）
-    private const val SMTP_HOST = "smtp.example.com"
-    private const val SMTP_PORT = "587"
-    private const val EMAIL_FROM = "noreply@hearhome.com"
-    private const val EMAIL_PASSWORD = "your_password_here"
-    
     /**
      * 发送邮件
+     * @param context 上下文（用于读取配置）
      * @param toEmail 收件人邮箱
      * @param subject 邮件主题
      * @param body 邮件内容
      * @return 是否发送成功
      */
     suspend fun sendEmail(
+        context: Context,
         toEmail: String,
         subject: String,
         body: String
     ): Boolean = withContext(Dispatchers.IO) {
         try {
+            // 检查配置是否完整
+            if (!SecureConfigManager.isEmailConfigured(context)) {
+                println("邮件配置未完成，请先配置SMTP信息")
+                return@withContext false
+            }
+            
+            // 从安全配置中读取邮件设置
+            val smtpHost = SecureConfigManager.getSmtpHost(context)
+            val smtpPort = SecureConfigManager.getSmtpPort(context)
+            val emailFrom = SecureConfigManager.getEmailFrom(context)
+            val password = SecureConfigManager.getEmailPassword(context)
+            
             val properties = Properties().apply {
-                put("mail.smtp.host", SMTP_HOST)
-                put("mail.smtp.port", SMTP_PORT)
+                put("mail.smtp.host", smtpHost)
+                put("mail.smtp.port", smtpPort)
                 put("mail.smtp.auth", "true")
                 put("mail.smtp.starttls.enable", "true")
             }
             
             val session = Session.getInstance(properties, object : Authenticator() {
                 override fun getPasswordAuthentication(): PasswordAuthentication {
-                    return PasswordAuthentication(EMAIL_FROM, EMAIL_PASSWORD)
+                    return PasswordAuthentication(emailFrom, password)
                 }
             })
             
             val message = MimeMessage(session).apply {
-                setFrom(InternetAddress(EMAIL_FROM))
+                setFrom(InternetAddress(emailFrom))
                 setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail))
                 this.subject = subject
                 setText(body, "UTF-8", "html")
@@ -68,6 +83,7 @@ object EmailHelper {
      * 发送评论通知邮件
      */
     suspend fun sendCommentNotificationEmail(
+        context: Context,
         toEmail: String,
         userName: String,
         postContent: String,
@@ -93,13 +109,14 @@ object EmailHelper {
             </html>
         """.trimIndent()
         
-        return sendEmail(toEmail, subject, body)
+        return sendEmail(context, toEmail, subject, body)
     }
     
     /**
      * 发送点赞通知邮件
      */
     suspend fun sendLikeNotificationEmail(
+        context: Context,
         toEmail: String,
         userName: String,
         postContent: String
@@ -119,13 +136,14 @@ object EmailHelper {
             </html>
         """.trimIndent()
         
-        return sendEmail(toEmail, subject, body)
+        return sendEmail(context, toEmail, subject, body)
     }
     
     /**
      * 发送新动态通知邮件
      */
     suspend fun sendNewPostNotificationEmail(
+        context: Context,
         toEmail: String,
         spaceName: String,
         userName: String,
@@ -147,13 +165,14 @@ object EmailHelper {
             </html>
         """.trimIndent()
         
-        return sendEmail(toEmail, subject, body)
+        return sendEmail(context, toEmail, subject, body)
     }
     
     /**
      * 发送空间加入申请通知邮件
      */
     suspend fun sendSpaceJoinRequestEmail(
+        context: Context,
         toEmail: String,
         spaceName: String,
         userName: String
@@ -171,6 +190,6 @@ object EmailHelper {
             </html>
         """.trimIndent()
         
-        return sendEmail(toEmail, subject, body)
+        return sendEmail(context, toEmail, subject, body)
     }
 }

@@ -21,6 +21,12 @@ data class PostComment(
     // 评论内容
     val content: String,
     
+    // 语音文件路径（可选）
+    val audioPath: String? = null,
+    
+    // 语音时长（毫秒）
+    val audioDuration: Long? = null,
+    
     // 回复目标用户ID(如果是回复某人的评论)
     val replyToUserId: Int? = null,
     

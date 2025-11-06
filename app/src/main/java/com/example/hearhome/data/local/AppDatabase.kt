@@ -21,9 +21,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SpaceMember::class,
         SpacePost::class,
         PostLike::class,
-        PostComment::class
+        PostComment::class,
+        PostFavorite::class
     ],
-    version = 8,
+    version = 10,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +36,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun messageDao(): MessageDao
     abstract fun spaceDao(): SpaceDao
     abstract fun spacePostDao(): SpacePostDao
+    abstract fun postFavoriteDao(): PostFavoriteDao
 
     companion object {
         @Volatile
@@ -154,6 +156,35 @@ abstract class AppDatabase : RoomDatabase() {
                 """.trimIndent())
             }
         }
+        
+        /**
+         * 迁移 8 -> 9: 添加收藏表
+         */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 创建动态收藏表
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS post_favorites (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        userId INTEGER NOT NULL,
+                        postId INTEGER NOT NULL,
+                        timestamp INTEGER NOT NULL,
+                        note TEXT
+                    )
+                """.trimIndent())
+            }
+        }
+        
+        /**
+         * 迁移 9 -> 10: 为评论表添加语音支持
+         */
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 为评论表添加语音字段
+                db.execSQL("ALTER TABLE post_comments ADD COLUMN audioPath TEXT")
+                db.execSQL("ALTER TABLE post_comments ADD COLUMN audioDuration INTEGER")
+            }
+        }
 
         /**
          * 获取数据库单例
@@ -173,7 +204,9 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_4_5,
                         MIGRATION_5_6,
                         MIGRATION_6_7,
-                        MIGRATION_7_8
+                        MIGRATION_7_8,
+                        MIGRATION_8_9,
+                        MIGRATION_9_10
                     )
                     .fallbackToDestructiveMigration()
                     .build()

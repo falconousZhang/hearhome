@@ -10,11 +10,12 @@ import kotlinx.coroutines.launch
 
 /**
  * 空间动态 ViewModel
- * 处理空间内动态的发布、点赞、评论等
+ * 处理空间内动态的发布、点赞、评论、收藏等
  */
 class SpacePostViewModel(
     private val spacePostDao: SpacePostDao,
     private val userDao: UserDao,
+    private val postFavoriteDao: PostFavoriteDao,
     private val spaceId: Int,
     private val currentUserId: Int,
     private val context: Context? = null
@@ -65,7 +66,8 @@ class SpacePostViewModel(
                 val postsWithInfo = postList.map { post ->
                     val author = userDao.getUserById(post.authorId)
                     val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
-                    PostWithAuthorInfo(post, author, hasLiked)
+                    val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
+                    PostWithAuthorInfo(post, author, hasLiked, hasFavorited)
                 }
                 _posts.value = postsWithInfo
             }
@@ -177,13 +179,17 @@ class SpacePostViewModel(
     suspend fun addComment(
         postId: Int,
         content: String,
-        replyToUserId: Int? = null
+        replyToUserId: Int? = null,
+        audioPath: String? = null,
+        audioDuration: Long? = null
     ): Boolean {
         return try {
             val comment = PostComment(
                 postId = postId,
                 authorId = currentUserId,
                 content = content,
+                audioPath = audioPath,
+                audioDuration = audioDuration,
                 replyToUserId = replyToUserId
             )
             spacePostDao.addCommentWithCount(comment)
@@ -230,6 +236,50 @@ class SpacePostViewModel(
             false
         }
     }
+    
+    /**
+     * 切换收藏状态
+     */
+    suspend fun toggleFavorite(postId: Int): Boolean {
+        return try {
+            val isFavorited = postFavoriteDao.isFavorited(currentUserId, postId) > 0
+            if (isFavorited) {
+                // 取消收藏
+                postFavoriteDao.removeFavorite(currentUserId, postId)
+            } else {
+                // 添加收藏
+                val favorite = PostFavorite(
+                    userId = currentUserId,
+                    postId = postId
+                )
+                postFavoriteDao.addFavorite(favorite)
+            }
+            loadPosts()
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+    
+    /**
+     * 获取用户的收藏动态列表
+     */
+    fun loadUserFavorites() {
+        viewModelScope.launch {
+            postFavoriteDao.getUserFavoritePostIds(currentUserId).collect { postIds ->
+                val favoritePosts = postIds.mapNotNull { postId ->
+                    val post = spacePostDao.getPostById(postId)
+                    if (post != null) {
+                        val author = userDao.getUserById(post.authorId)
+                        val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
+                        PostWithAuthorInfo(post, author, hasLiked, hasFavorited = true)
+                    } else null
+                }
+                _posts.value = favoritePosts
+            }
+        }
+    }
 }
 
 /**
@@ -238,7 +288,8 @@ class SpacePostViewModel(
 data class PostWithAuthorInfo(
     val post: SpacePost,
     val author: User?,
-    val hasLiked: Boolean = false
+    val hasLiked: Boolean = false,
+    val hasFavorited: Boolean = false
 )
 
 /**
