@@ -38,7 +38,9 @@ fun SpaceManageScreen(
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
     
+    // 使用 key 确保每个空间使用独立的 ViewModel 实例
     val viewModel: SpaceViewModel = viewModel(
+        key = "space_manage_$spaceId",
         factory = SpaceViewModelFactory(
             db.spaceDao(),
             db.userDao(),
@@ -51,6 +53,9 @@ fun SpaceManageScreen(
     val pendingMembers by viewModel.pendingMembers.collectAsState()
     val currentUserRole by viewModel.currentUserRole.collectAsState()
     val scope = rememberCoroutineScope()
+    
+    // 判断是否有管理权限
+    val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
     
     LaunchedEffect(spaceId) {
         viewModel.selectSpace(spaceId)
@@ -67,8 +72,8 @@ fun SpaceManageScreen(
         return
     }
     
-    // 权限检查
-    if (currentUserRole != "admin") {
+        // 权限检查（管理员和所有者可访问）
+    if (!isAdmin) {
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -98,6 +103,12 @@ fun SpaceManageScreen(
                         "只有管理员可以管理空间",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "当前角色: ${currentUserRole ?: "加载中..."}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
                     )
                 }
             }
@@ -276,7 +287,12 @@ fun MemberCard(
     onRemove: () -> Unit
 ) {
     val isCurrentUser = memberInfo.user.uid == currentUserId
-    val isAdmin = memberInfo.member.role == "admin"
+    val isAdminOrOwner = memberInfo.member.role == "admin" || memberInfo.member.role == "owner"
+    val roleText = when (memberInfo.member.role) {
+        "owner" -> "所有者"
+        "admin" -> "管理员"
+        else -> "成员"
+    }
     
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -313,16 +329,16 @@ fun MemberCard(
                         }
                     }
                     Text(
-                        text = if (isAdmin) "管理员" else "成员",
+                        text = roleText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (isAdmin) MaterialTheme.colorScheme.primary 
+                        color = if (isAdminOrOwner) MaterialTheme.colorScheme.primary 
                                else MaterialTheme.colorScheme.outline
                     )
                 }
             }
             
-            // 只有非管理员且非当前用户才显示移除按钮
-            if (!isAdmin && !isCurrentUser) {
+            // 只有非管理员、非所有者且非当前用户才显示移除按钮
+            if (!isAdminOrOwner && !isCurrentUser) {
                 TextButton(onClick = onRemove) {
                     Text("移除", color = MaterialTheme.colorScheme.error)
                 }

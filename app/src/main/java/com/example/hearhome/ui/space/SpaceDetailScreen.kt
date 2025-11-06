@@ -40,8 +40,9 @@ fun SpaceDetailScreen(
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
     
-    // 空间管理ViewModel
+    // 空间管理ViewModel - 使用 key 确保每个空间使用独立的实例
     val spaceViewModel: SpaceViewModel = viewModel(
+        key = "space_detail_$spaceId",
         factory = SpaceViewModelFactory(
             db.spaceDao(),
             db.userDao(),
@@ -64,12 +65,15 @@ fun SpaceDetailScreen(
     val currentUserRole by spaceViewModel.currentUserRole.collectAsState()
     val scope = rememberCoroutineScope()
     
+    // 判断是否有管理权限（管理员或所有者）
+    val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
+    
     // 状态管理
     var showPostDialog by remember { mutableStateOf(false) }
     var showMembersDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
     
-    // 加载空间信息
+    // 加载空间信息和用户角色
     LaunchedEffect(spaceId) {
         spaceViewModel.selectSpace(spaceId)
     }
@@ -102,7 +106,9 @@ fun SpaceDetailScreen(
                                     navController.navigate("space_info/$spaceId")
                                 }
                             )
-                            if (currentUserRole == "admin") {
+                            // 显示成员管理选项（管理员和所有者可见）
+                            // 只要 currentUserRole 是 admin 或 owner 就显示
+                            if (currentUserRole == "admin" || currentUserRole == "owner") {
                                 DropdownMenuItem(
                                     text = { Text("成员管理") },
                                     onClick = {

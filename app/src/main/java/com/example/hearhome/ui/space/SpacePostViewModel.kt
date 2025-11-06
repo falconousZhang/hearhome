@@ -28,6 +28,12 @@ class SpacePostViewModel(
     // 选中动态的评论列表
     private val _comments = MutableStateFlow<List<CommentInfo>>(emptyList())
     val comments: StateFlow<List<CommentInfo>> = _comments.asStateFlow()
+    
+    // 当前正在查看的 postId
+    private var currentPostId: Int? = null
+    
+    // 评论收集协程的 Job，用于取消之前的收集
+    private var commentsJob: kotlinx.coroutines.Job? = null
 
     init {
         loadPosts()
@@ -107,22 +113,26 @@ class SpacePostViewModel(
      * 选择某条动态查看详情
      */
     fun selectPost(postId: Int) {
+        // 取消之前的评论收集协程
+        commentsJob?.cancel()
+        
+        // 更新当前查看的帖子ID
+        currentPostId = postId
+        
+        // 清空旧的评论列表
+        _comments.value = emptyList()
+        
         viewModelScope.launch {
             val post = spacePostDao.getPostById(postId)
             if (post != null) {
                 val author = userDao.getUserById(post.authorId)
                 val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
                 _selectedPost.value = PostWithAuthorInfo(post, author, hasLiked)
-                loadComments(postId)
             }
         }
-    }
-
-    /**
-     * 加载某条动态的评论
-     */
-    fun loadComments(postId: Int) {
-        viewModelScope.launch {
+        
+        // 启动新的评论监听协程
+        commentsJob = viewModelScope.launch {
             spacePostDao.getPostComments(postId).collect { commentList ->
                 val commentsWithInfo = commentList.mapNotNull { comment ->
                     val author = userDao.getUserById(comment.authorId)
@@ -155,7 +165,8 @@ class SpacePostViewModel(
             )
             spacePostDao.addCommentWithCount(comment)
             // Flow 会自动更新评论列表，不需要手动调用 loadComments
-            loadPosts() // 更新评论数
+            // 但需要更新帖子列表中的评论数
+            loadPosts()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -170,13 +181,21 @@ class SpacePostViewModel(
         return try {
             spacePostDao.deleteComment(commentId)
             spacePostDao.updateCommentCount(postId, -1)
-            loadComments(postId)
+            // Flow 会自动更新评论列表
             loadPosts()
             true
         } catch (e: Exception) {
             e.printStackTrace()
             false
         }
+    }
+    
+    /**
+     * 清理资源
+     */
+    override fun onCleared() {
+        super.onCleared()
+        commentsJob?.cancel()
     }
 }
 

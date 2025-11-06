@@ -61,9 +61,13 @@ class SpaceViewModel(
             _currentSpace.value = space
             
             if (space != null) {
-                loadSpaceMembers(spaceId)
+                // 先加载用户角色，因为其他操作可能依赖角色信息
                 loadCurrentUserRole(spaceId)
-                if (_currentUserRole.value == "admin") {
+                // 加载空间成员
+                loadSpaceMembers(spaceId)
+                // 如果是管理员，加载待审核成员
+                val role = _currentUserRole.value
+                if (role == "admin" || role == "owner") {
                     loadPendingMembers(spaceId)
                 }
             }
@@ -130,11 +134,11 @@ class SpaceViewModel(
             
             val spaceId = spaceDao.createSpace(space).toInt()
             
-            // 自动将创建者加入空间并设为管理员
+            // 自动将创建者加入空间并设为所有者
             val creatorMember = SpaceMember(
                 spaceId = spaceId,
                 userId = currentUserId,
-                role = "admin",
+                role = "owner",
                 status = "active"
             )
             spaceDao.addSpaceMember(creatorMember)

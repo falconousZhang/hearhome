@@ -18,7 +18,7 @@ data class SpaceMember(
     // 成员用户ID
     val userId: Int,
     
-    // 角色: admin(管理员) / member(普通成员)
+    // 角色: owner(所有者) / admin(管理员) / member(普通成员)
     val role: String = "member",
     
     // 成员昵称(在该空间的显示名)
