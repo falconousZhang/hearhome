@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 8,
-    "identityHash": "d1b5129e45dc8f9f8848644a02a079bc",
+    "identityHash": "b29af0caaeb62336e18fa8a147ff5fbe",
     "entities": [
       {
         "tableName": "users",
@@ -136,26 +136,55 @@
       },
       {
         "tableName": "couples",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`userId1` INTEGER NOT NULL, `userId2` INTEGER NOT NULL, PRIMARY KEY(`userId1`, `userId2`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `requesterId` INTEGER NOT NULL, `partnerId` INTEGER NOT NULL, `status` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `requesterRemark` TEXT, `partnerRemark` TEXT)",
         "fields": [
           {
-            "fieldPath": "userId1",
-            "columnName": "userId1",
+            "fieldPath": "id",
+            "columnName": "id",
             "affinity": "INTEGER",
             "notNull": true
           },
           {
-            "fieldPath": "userId2",
-            "columnName": "userId2",
+            "fieldPath": "requesterId",
+            "columnName": "requesterId",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "partnerId",
+            "columnName": "partnerId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requesterRemark",
+            "columnName": "requesterRemark",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "partnerRemark",
+            "columnName": "partnerRemark",
+            "affinity": "TEXT",
+            "notNull": false
           }
         ],
         "primaryKey": {
-          "autoGenerate": false,
+          "autoGenerate": true,
           "columnNames": [
-            "userId1",
-            "userId2"
+            "id"
           ]
         },
         "indices": [],
@@ -215,7 +244,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd1b5129e45dc8f9f8848644a02a079bc')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'b29af0caaeb62336e18fa8a147ff5fbe')"
     ]
   }
 }
