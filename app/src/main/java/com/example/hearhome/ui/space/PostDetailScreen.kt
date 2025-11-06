@@ -21,6 +21,7 @@ import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.ui.components.EmojiTextField
 import kotlinx.coroutines.launch
 
 /**
@@ -65,7 +66,8 @@ fun PostDetailScreen(
             db.spacePostDao(),
             db.userDao(),
             spaceId,
-            currentUserId
+            currentUserId,
+            context
         )
     )
     
@@ -194,24 +196,27 @@ fun PostDetailScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            OutlinedTextField(
+                            EmojiTextField(
                                 value = commentText,
                                 onValueChange = { commentText = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                placeholder = { Text("说点什么...") },
-                                maxLines = 3
+                                label = "回复内容",
+                                placeholder = "说点什么...",
+                                maxLines = 3,
+                                minHeight = 60
                             )
                         }
                         IconButton(onClick = { replyToUser = null }) {
                             Icon(Icons.Default.Close, "取消回复")
                         }
                     } else {
-                        OutlinedTextField(
+                        EmojiTextField(
                             value = commentText,
                             onValueChange = { commentText = it },
                             modifier = Modifier.weight(1f),
-                            placeholder = { Text("说点什么...") },
-                            maxLines = 3
+                            label = "评论",
+                            placeholder = "说点什么...",
+                            maxLines = 3,
+                            minHeight = 60
                         )
                     }
                     

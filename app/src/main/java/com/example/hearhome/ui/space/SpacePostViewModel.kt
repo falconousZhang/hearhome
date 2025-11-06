@@ -1,8 +1,10 @@
 package com.example.hearhome.ui.space
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.local.*
+import com.example.hearhome.utils.NotificationHelper
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -14,7 +16,8 @@ class SpacePostViewModel(
     private val spacePostDao: SpacePostDao,
     private val userDao: UserDao,
     private val spaceId: Int,
-    private val currentUserId: Int
+    private val currentUserId: Int,
+    private val context: Context? = null
 ) : ViewModel() {
 
     // 空间内的所有动态
@@ -25,15 +28,29 @@ class SpacePostViewModel(
     private val _selectedPost = MutableStateFlow<PostWithAuthorInfo?>(null)
     val selectedPost: StateFlow<PostWithAuthorInfo?> = _selectedPost.asStateFlow()
 
+    // 当前选中的 postId
+    private val _selectedPostId = MutableStateFlow<Int?>(null)
+
     // 选中动态的评论列表
-    private val _comments = MutableStateFlow<List<CommentInfo>>(emptyList())
-    val comments: StateFlow<List<CommentInfo>> = _comments.asStateFlow()
-    
-    // 当前正在查看的 postId
-    private var currentPostId: Int? = null
-    
-    // 评论收集协程的 Job，用于取消之前的收集
-    private var commentsJob: kotlinx.coroutines.Job? = null
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val comments: StateFlow<List<CommentInfo>> = _selectedPostId.flatMapLatest { postId ->
+        if (postId == null) {
+            flowOf(emptyList())
+        } else {
+            spacePostDao.getPostComments(postId).map { commentList ->
+                commentList.mapNotNull { comment ->
+                    val author = userDao.getUserById(comment.authorId)
+                    val replyToUser = comment.replyToUserId?.let {
+                        userDao.getUserById(it)
+                    }
+                    if (author != null) {
+                        CommentInfo(comment, author, replyToUser)
+                    } else null
+                }
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
 
     init {
         loadPosts()
@@ -59,27 +76,25 @@ class SpacePostViewModel(
      * 发布新动态
      */
     suspend fun createPost(
-        content: String,
-        images: List<String>? = null,
-        location: String? = null
-    ): Boolean {
-        return try {
-            val imagesJson = images?.joinToString(",")
-            val post = SpacePost(
-                spaceId = spaceId,
-                authorId = currentUserId,
-                content = content,
-                images = imagesJson,
-                location = location
-            )
-            spacePostDao.createPost(post)
-            loadPosts()
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
+    content: String,
+    imageUris: List<String>? = null,
+    location: String? = null
+): Boolean {
+    return try {
+        val post = SpacePost(
+            spaceId = spaceId,
+            authorId = currentUserId,
+            content = content,
+            images = imageUris?.joinToString(","),
+            location = location
+        )
+        spacePostDao.createPost(post)
+        true
+    } catch (e: Exception) {
+        e.printStackTrace()
+        false
     }
+}
 
     /**
      * 删除动态
@@ -101,7 +116,39 @@ class SpacePostViewModel(
     suspend fun toggleLike(postId: Int): Boolean {
         return try {
             spacePostDao.toggleLike(postId, currentUserId)
+            
+            // 发送点赞通知
+            context?.let { ctx ->
+                val post = spacePostDao.getPostById(postId)
+                if (post != null && post.authorId != currentUserId) {
+                    // 只在点赞别人的动态时发送通知
+                    val currentUser = userDao.getUserById(currentUserId)
+                    val postAuthor = userDao.getUserById(post.authorId)
+                    
+                    if (currentUser != null && postAuthor != null) {
+                        // 检查是否新增点赞（如果已点赞则是取消点赞）
+                        val isLiking = spacePostDao.hasLiked(postId, currentUserId) > 0
+                        
+                        if (isLiking) {
+                            val contentPreview = if (post.content.length > 20) {
+                                post.content.substring(0, 20) + "..."
+                            } else {
+                                post.content
+                            }
+                            
+                            NotificationHelper.sendLikeNotification(
+                                context = ctx,
+                                notificationId = System.currentTimeMillis().toInt(),
+                                userName = currentUser.nickname,
+                                contentPreview = contentPreview
+                            )
+                        }
+                    }
+                }
+            }
+            
             loadPosts()
+            selectPost(postId) // Refresh selected post
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -113,37 +160,13 @@ class SpacePostViewModel(
      * 选择某条动态查看详情
      */
     fun selectPost(postId: Int) {
-        // 取消之前的评论收集协程
-        commentsJob?.cancel()
-        
-        // 更新当前查看的帖子ID
-        currentPostId = postId
-        
-        // 清空旧的评论列表
-        _comments.value = emptyList()
-        
+        _selectedPostId.value = postId
         viewModelScope.launch {
             val post = spacePostDao.getPostById(postId)
             if (post != null) {
                 val author = userDao.getUserById(post.authorId)
                 val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
                 _selectedPost.value = PostWithAuthorInfo(post, author, hasLiked)
-            }
-        }
-        
-        // 启动新的评论监听协程
-        commentsJob = viewModelScope.launch {
-            spacePostDao.getPostComments(postId).collect { commentList ->
-                val commentsWithInfo = commentList.mapNotNull { comment ->
-                    val author = userDao.getUserById(comment.authorId)
-                    val replyToUser = comment.replyToUserId?.let { 
-                        userDao.getUserById(it) 
-                    }
-                    if (author != null) {
-                        CommentInfo(comment, author, replyToUser)
-                    } else null
-                }
-                _comments.value = commentsWithInfo
             }
         }
     }
@@ -164,8 +187,27 @@ class SpacePostViewModel(
                 replyToUserId = replyToUserId
             )
             spacePostDao.addCommentWithCount(comment)
-            // Flow 会自动更新评论列表，不需要手动调用 loadComments
-            // 但需要更新帖子列表中的评论数
+            
+            // 发送评论通知
+            context?.let { ctx ->
+                val post = spacePostDao.getPostById(postId)
+                if (post != null && post.authorId != currentUserId) {
+                    // 只在评论别人的动态时发送通知
+                    val currentUser = userDao.getUserById(currentUserId)
+                    
+                    if (currentUser != null) {
+                        NotificationHelper.sendCommentNotification(
+                            context = ctx,
+                            notificationId = System.currentTimeMillis().toInt(),
+                            userName = currentUser.nickname,
+                            content = content,
+                            postId = postId
+                        )
+                    }
+                }
+            }
+            
+            // 更新帖子列表中的评论数
             loadPosts()
             true
         } catch (e: Exception) {
@@ -181,21 +223,12 @@ class SpacePostViewModel(
         return try {
             spacePostDao.deleteComment(commentId)
             spacePostDao.updateCommentCount(postId, -1)
-            // Flow 会自动更新评论列表
             loadPosts()
             true
         } catch (e: Exception) {
             e.printStackTrace()
             false
         }
-    }
-    
-    /**
-     * 清理资源
-     */
-    override fun onCleared() {
-        super.onCleared()
-        commentsJob?.cancel()
     }
 }
 

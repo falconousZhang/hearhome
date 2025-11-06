@@ -34,12 +34,17 @@ import com.example.hearhome.ui.space.PostDetailScreen
 import com.example.hearhome.ui.space.SpaceManageScreen
 import com.example.hearhome.ui.space.SpaceInfoScreen
 import com.example.hearhome.ui.theme.HearHomeTheme
+import com.example.hearhome.utils.NotificationHelper
 
 class MainActivity : ComponentActivity() {
     @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // 初始化通知渠道
+        NotificationHelper.createNotificationChannels(this)
+        
         setContent {
             HearHomeTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) {

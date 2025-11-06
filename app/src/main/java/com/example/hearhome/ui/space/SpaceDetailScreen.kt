@@ -29,7 +29,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.rememberImagePainter
 import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.ui.components.EmojiTextField
+import com.example.hearhome.utils.ImageUtils
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -63,7 +66,8 @@ fun SpaceDetailScreen(
             db.spacePostDao(),
             db.userDao(),
             spaceId,
-            currentUserId
+            currentUserId,
+            context
         )
     )
     
@@ -195,11 +199,19 @@ fun SpaceDetailScreen(
     if (showPostDialog) {
         CreatePostScreen(
             onDismiss = { showPostDialog = false },
-            onPost = { content, images ->
+            onPost = { content, imageUris ->
                 scope.launch {
-                    val success = postViewModel.createPost(content, images)
+                    // 先保存图片到内部存储
+                    val savedImagePaths = ImageUtils.saveImagesToInternalStorage(
+                        context, 
+                        imageUris.map { Uri.parse(it) }
+                    )
+                    
+                    // 发布动态
+                    val success = postViewModel.createPost(content, savedImagePaths)
                     if (success) {
                         showPostDialog = false
+                        postViewModel.loadPosts() // Manually refresh posts
                     }
                 }
             }
@@ -329,15 +341,19 @@ fun PostCard(
             if (!post.images.isNullOrEmpty()) {
                 Spacer(Modifier.height(12.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(post.images.split(",")) { imageUrl ->
-                        Image(
-                            painter = rememberImagePainter(data = Uri.parse(imageUrl)),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .height(150.dp)
-                                .clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
+                    items(post.images.split(",").filter { it.isNotBlank() }) { imagePath ->
+                        // 从文件路径加载图片
+                        val imageFile = File(imagePath)
+                        if (imageFile.exists()) {
+                            Image(
+                                painter = rememberImagePainter(data = imageFile),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .height(150.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
                     }
                 }
             }
@@ -411,14 +427,13 @@ fun CreatePostScreen(
         title = { Text("发布动态") },
         text = {
             Column {
-                OutlinedTextField(
+                EmojiTextField(
                     value = content,
                     onValueChange = { content = it },
-                    label = { Text("说点什么...") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(150.dp),
-                    maxLines = 8
+                    label = "说点什么...",
+                    placeholder = "分享你的心情~",
+                    maxLines = 8,
+                    minHeight = 150
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = { imagePickerLauncher.launch("image/*") }) {
@@ -429,14 +444,36 @@ fun CreatePostScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(imageUris) { uri ->
-                        Image(
-                            painter = rememberImagePainter(uri),
-                            contentDescription = null,
-                            modifier = Modifier
-                                .size(80.dp)
-                                .clip(RoundedCornerShape(8.dp)),
-                            contentScale = ContentScale.Crop
-                        )
+                        Box {
+                            Image(
+                                painter = rememberImagePainter(uri),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(80.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                            // 删除按钮
+                            IconButton(
+                                onClick = {
+                                    imageUris = imageUris.filter { it != uri }
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(24.dp)
+                                    .background(
+                                        Color.Black.copy(alpha = 0.5f),
+                                        shape = CircleShape
+                                    )
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "删除",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

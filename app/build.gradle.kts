@@ -38,6 +38,14 @@ android {
     buildFeatures {
         compose = true
     }
+    packaging {
+        resources {
+            excludes += "META-INF/NOTICE.md"
+            excludes += "META-INF/LICENSE.md"
+            excludes += "META-INF/LICENSE"
+            excludes += "META-INF/NOTICE"
+        }
+    }
 }
 
 ksp {
@@ -69,4 +77,8 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     
     implementation("io.coil-kt:coil-compose:1.4.0")
+    implementation("com.sun.mail:android-mail:1.6.7")
+    implementation("com.sun.mail:android-activation:1.6.7")
+
+
 }
