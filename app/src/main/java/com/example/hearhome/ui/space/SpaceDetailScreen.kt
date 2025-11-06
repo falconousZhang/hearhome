@@ -1,9 +1,14 @@
 package com.example.hearhome.ui.space
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,12 +20,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import coil.compose.rememberImagePainter
 import com.example.hearhome.data.local.AppDatabase
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -186,11 +193,11 @@ fun SpaceDetailScreen(
     
     // 发布动态对话框
     if (showPostDialog) {
-        CreatePostDialog(
+        CreatePostScreen(
             onDismiss = { showPostDialog = false },
-            onPost = { content ->
+            onPost = { content, images ->
                 scope.launch {
-                    val success = postViewModel.createPost(content)
+                    val success = postViewModel.createPost(content, images)
                     if (success) {
                         showPostDialog = false
                     }
@@ -317,7 +324,24 @@ fun PostCard(
                 text = post.content,
                 style = MaterialTheme.typography.bodyMedium
             )
-            
+
+            // 图片显示
+            if (!post.images.isNullOrEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(post.images.split(",")) { imageUrl ->
+                        Image(
+                            painter = rememberImagePainter(data = Uri.parse(imageUrl)),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .height(150.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                }
+            }
+
             // 定位信息
             if (post.location != null) {
                 Spacer(Modifier.height(8.dp))
@@ -369,12 +393,81 @@ fun PostCard(
 }
 
 @Composable
+fun CreatePostScreen(
+    onDismiss: () -> Unit,
+    onPost: (String, List<String>) -> Unit
+) {
+    var content by remember { mutableStateOf("") }
+    var imageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        imageUris = uris
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("发布动态") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = content,
+                    onValueChange = { content = it },
+                    label = { Text("说点什么...") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp),
+                    maxLines = 8
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { imagePickerLauncher.launch("image/*") }) {
+                    Icon(Icons.Default.AddPhotoAlternate, "添加图片")
+                    Spacer(Modifier.width(4.dp))
+                    Text("添加图片")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(imageUris) { uri ->
+                        Image(
+                            painter = rememberImagePainter(uri),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(80.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (content.isNotBlank() || imageUris.isNotEmpty()) {
+                        onPost(content, imageUris.map { it.toString() })
+                    }
+                },
+                enabled = content.isNotBlank() || imageUris.isNotEmpty()
+            ) {
+                Text("发布")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+@Composable
 fun CreatePostDialog(
     onDismiss: () -> Unit,
     onPost: (String) -> Unit
 ) {
     var content by remember { mutableStateOf("") }
-    
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("发布动态") },
