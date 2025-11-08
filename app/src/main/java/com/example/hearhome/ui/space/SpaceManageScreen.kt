@@ -279,10 +279,12 @@ fun SpaceManageScreen(
                             val result = viewModel.dissolveSpace(spaceId)
                             when (result) {
                                 is DissolveSpaceResult.Success -> {
-                                    snackbarHostState.showSnackbar(result.message)
-                                    // 延迟一下再返回，确保Snackbar能显示
-                                    kotlinx.coroutines.delay(500)
-                                    navController.popBackStack("home", false)
+                                    // 解散成功，直接返回到主页
+                                    // 使用 popBackStack 清除所有空间相关页面，返回到 home/{userId}
+                                    navController.popBackStack(
+                                        route = "home/$currentUserId",
+                                        inclusive = false
+                                    )
                                 }
                                 is DissolveSpaceResult.Failure -> {
                                     snackbarHostState.showSnackbar(result.message)
