@@ -39,6 +39,7 @@ fun FavoritesScreen(
             db.spacePostDao(),
             db.userDao(),
             db.postFavoriteDao(),
+            db.mediaAttachmentDao(),
             spaceId,
             currentUserId,
             context

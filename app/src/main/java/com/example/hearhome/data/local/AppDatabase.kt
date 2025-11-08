@@ -22,9 +22,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         SpacePost::class,
         PostLike::class,
         PostComment::class,
-        PostFavorite::class
+        PostFavorite::class,
+        MediaAttachment::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun spaceDao(): SpaceDao
     abstract fun spacePostDao(): SpacePostDao
     abstract fun postFavoriteDao(): PostFavoriteDao
+    abstract fun mediaAttachmentDao(): MediaAttachmentDao
 
     companion object {
         @Volatile
@@ -187,6 +189,31 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * 迁移 10 -> 11: 增加通用媒体附件表
+         */
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                        CREATE TABLE IF NOT EXISTS media_attachments (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                            ownerType TEXT NOT NULL,
+                            ownerId INTEGER NOT NULL,
+                            type TEXT NOT NULL,
+                            uri TEXT NOT NULL,
+                            duration INTEGER,
+                            extra TEXT,
+                            createdAt INTEGER NOT NULL
+                        )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_media_attachments_ownerType_ownerId ON media_attachments(ownerType, ownerId)"
+                )
+            }
+        }
+
+        /**
          * 获取数据库单例
          */
         fun getInstance(context: Context): AppDatabase =
@@ -206,7 +233,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_6_7,
                         MIGRATION_7_8,
                         MIGRATION_8_9,
-                        MIGRATION_9_10
+                        MIGRATION_9_10,
+                        MIGRATION_10_11
                     )
                     .fallbackToDestructiveMigration()
                     .build()

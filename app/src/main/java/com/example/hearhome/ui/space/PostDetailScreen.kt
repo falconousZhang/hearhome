@@ -5,7 +5,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -21,11 +20,17 @@ import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.model.AttachmentType
+import com.example.hearhome.model.PendingAttachment
 import com.example.hearhome.ui.components.AudioPlayer
-import com.example.hearhome.ui.components.AudioRecorder
 import com.example.hearhome.ui.components.EmojiTextField
-import com.example.hearhome.utils.TestUtils
+import com.example.hearhome.ui.components.attachments.AttachmentSelector
+import com.example.hearhome.ui.components.attachments.AttachmentAudioList
+import com.example.hearhome.ui.components.attachments.AttachmentGallery
+import com.example.hearhome.utils.AttachmentFileHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 动态详情界面
@@ -69,6 +74,7 @@ fun PostDetailScreen(
             db.spacePostDao(),
             db.userDao(),
             db.postFavoriteDao(),
+            db.mediaAttachmentDao(),
             spaceId,
             currentUserId,
             context
@@ -81,9 +87,7 @@ fun PostDetailScreen(
     
     var commentText by remember { mutableStateOf("") }
     var replyToUser by remember { mutableStateOf<CommentInfo?>(null) }
-    var showAudioRecorder by remember { mutableStateOf(false) }
-    var audioPath by remember { mutableStateOf<String?>(null) }
-    var audioDuration by remember { mutableLongStateOf(0L) }
+    var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
     
     LaunchedEffect(postId) {
         viewModel.selectPost(postId)
@@ -199,129 +203,84 @@ fun PostDetailScreen(
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
-                    // 显示已录制的语音
-                    if (audioPath != null) {
+                    if (replyToUser != null) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            AudioPlayer(
-                                audioPath = audioPath!!,
-                                duration = audioDuration,
-                                modifier = Modifier.weight(1f)
+                            Text(
+                                "回复 @${replyToUser?.author?.nickname}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
                             )
-                            IconButton(
-                                onClick = {
-                                    audioPath = null
-                                    audioDuration = 0L
-                                }
-                            ) {
-                                Icon(Icons.Default.Close, "删除语音")
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                    }
-                    
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 显示回复目标
-                        if (replyToUser != null) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "回复 @${replyToUser?.author?.nickname}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                EmojiTextField(
-                                    value = commentText,
-                                    onValueChange = { commentText = it },
-                                    label = "回复内容",
-                                    placeholder = "说点什么...",
-                                    maxLines = 3,
-                                    minHeight = 60
-                                )
-                            }
                             IconButton(onClick = { replyToUser = null }) {
-                                Icon(Icons.Default.Close, "取消回复")
-                            }
-                        } else {
-                            EmojiTextField(
-                                value = commentText,
-                                onValueChange = { commentText = it },
-                                modifier = Modifier.weight(1f),
-                                label = "评论",
-                                placeholder = "说点什么...",
-                                maxLines = 3,
-                                minHeight = 60
-                            )
-                        }
-                        
-                        Spacer(Modifier.width(8.dp))
-                        
-                        // 语音按钮
-                        IconButton(
-                            onClick = { showAudioRecorder = true }
-                        ) {
-                            Icon(Icons.Default.Mic, "语音消息")
-                        }
-                        
-                        // 测试按钮（仅模拟器显示）
-                        if (TestUtils.isEmulator()) {
-                            IconButton(
-                                onClick = {
-                                    val mockPath = TestUtils.createMockAudioFile(context)
-                                    if (mockPath != null) {
-                                        audioPath = mockPath
-                                        audioDuration = TestUtils.getMockAudioDuration()
-                                    }
-                                }
-                            ) {
-                                Icon(Icons.Default.Science, "模拟语音", tint = MaterialTheme.colorScheme.tertiary)
+                                Icon(Icons.Default.Close, contentDescription = "取消回复")
                             }
                         }
-                        
-                        // 发送按钮
+                        Spacer(Modifier.height(4.dp))
+                    }
+
+                    EmojiTextField(
+                        value = commentText,
+                        onValueChange = { commentText = it },
+                        label = if (replyToUser != null) "回复内容" else "评论",
+                        placeholder = "说点什么...",
+                        maxLines = 4,
+                        minHeight = 80
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+
+                    AttachmentSelector(
+                        attachments = attachments,
+                        onAttachmentsChange = { attachments = it },
+                        enableTestTools = true
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
                         Button(
                             onClick = {
-                                if (commentText.isNotBlank() || audioPath != null) {
+                                if (commentText.isNotBlank() || attachments.isNotEmpty()) {
                                     scope.launch {
-                                        viewModel.addComment(
+                                        val resolved = withContext(Dispatchers.IO) {
+                                            AttachmentFileHelper.resolvePendingAttachments(
+                                                context,
+                                                attachments
+                                            )
+                                        }
+                                        val fallbackContent = when {
+                                            resolved.any { it.type == AttachmentType.AUDIO } -> "[语音消息]"
+                                            resolved.any { it.type == AttachmentType.IMAGE } -> "[图片]"
+                                            else -> "[附件]"
+                                        }
+                                        val sendContent = commentText.ifBlank { fallbackContent }
+                                        val success = viewModel.addComment(
                                             postId = postId,
-                                            content = commentText.ifBlank { "[语音消息]" },
+                                            content = sendContent,
                                             replyToUserId = replyToUser?.author?.uid,
-                                            audioPath = audioPath,
-                                            audioDuration = audioDuration
+                                            attachments = resolved
                                         )
-                                        commentText = ""
-                                        audioPath = null
-                                        audioDuration = 0L
-                                        replyToUser = null
+                                        if (success) {
+                                            commentText = ""
+                                            attachments = emptyList()
+                                            replyToUser = null
+                                        }
                                     }
                                 }
                             },
-                            enabled = commentText.isNotBlank() || audioPath != null
+                            enabled = commentText.isNotBlank() || attachments.isNotEmpty()
                         ) {
                             Text("发送")
                         }
                     }
                 }
             }
-        }
-        
-        // 语音录制对话框
-        if (showAudioRecorder) {
-            AudioRecorder(
-                onAudioRecorded = { path, duration ->
-                    audioPath = path
-                    audioDuration = duration
-                    showAudioRecorder = false
-                },
-                onDismiss = {
-                    showAudioRecorder = false
-                }
-            )
         }
     }
 }
@@ -395,12 +354,35 @@ fun CommentItem(
             
             Spacer(Modifier.height(8.dp))
             
-            // 显示语音消息
-            if (comment.audioPath != null && comment.audioDuration != null) {
+            val hasAudioAttachments = commentInfo.attachments.any {
+                AttachmentType.fromStorage(it.type) == AttachmentType.AUDIO
+            }
+            if (hasAudioAttachments) {
+                AttachmentAudioList(
+                    attachments = commentInfo.attachments,
+                    audioItemModifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+            } else if (comment.audioPath != null && comment.audioDuration != null) {
+                // 兼容旧数据
                 AudioPlayer(
                     audioPath = comment.audioPath!!,
                     duration = comment.audioDuration!!,
                     modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(4.dp))
+            }
+
+            val hasImageAttachments = commentInfo.attachments.any {
+                AttachmentType.fromStorage(it.type) == AttachmentType.IMAGE
+            }
+            if (hasImageAttachments) {
+                Spacer(Modifier.height(4.dp))
+                AttachmentGallery(
+                    attachments = commentInfo.attachments,
+                    imageWidth = 80.dp,
+                    imageHeight = 80.dp,
+                    cornerRadius = 8.dp
                 )
                 Spacer(Modifier.height(4.dp))
             }

@@ -98,6 +98,16 @@ interface SpacePostDao {
         ORDER BY timestamp ASC
     """)
     fun getPostComments(postId: Int): Flow<List<PostComment>>
+
+    /**
+     * 一次性查询评论列表（用于清理）
+     */
+    @Query("""
+        SELECT * FROM post_comments 
+        WHERE postId = :postId AND status = 'normal'
+        ORDER BY timestamp ASC
+    """)
+    suspend fun getPostCommentsOnce(postId: Int): List<PostComment>
     
     /**
      * 删除评论

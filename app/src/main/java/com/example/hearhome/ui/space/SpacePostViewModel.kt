@@ -4,7 +4,12 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.local.*
+import com.example.hearhome.model.AttachmentType
+import com.example.hearhome.model.ResolvedAttachment
+import com.example.hearhome.utils.AudioUtils
+import com.example.hearhome.utils.ImageUtils
 import com.example.hearhome.utils.NotificationHelper
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -16,6 +21,7 @@ class SpacePostViewModel(
     private val spacePostDao: SpacePostDao,
     private val userDao: UserDao,
     private val postFavoriteDao: PostFavoriteDao,
+    private val mediaAttachmentDao: MediaAttachmentDao,
     private val spaceId: Int,
     private val currentUserId: Int,
     private val context: Context? = null
@@ -24,6 +30,8 @@ class SpacePostViewModel(
     // 空间内的所有动态
     private val _posts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())
     val posts: StateFlow<List<PostWithAuthorInfo>> = _posts.asStateFlow()
+
+    private var postsJob: Job? = null
 
     // 收藏的动态列表
     private val _favoritePosts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())
@@ -42,15 +50,33 @@ class SpacePostViewModel(
         if (postId == null) {
             flowOf(emptyList())
         } else {
-            spacePostDao.getPostComments(postId).map { commentList ->
-                commentList.mapNotNull { comment ->
-                    val author = userDao.getUserById(comment.authorId)
-                    val replyToUser = comment.replyToUserId?.let {
-                        userDao.getUserById(it)
-                    }
-                    if (author != null) {
-                        CommentInfo(comment, author, replyToUser)
-                    } else null
+            spacePostDao.getPostComments(postId).flatMapLatest { commentList ->
+                if (commentList.isEmpty()) {
+                    flowOf(emptyList())
+                } else {
+                    val commentIds = commentList.map { it.id }
+                    mediaAttachmentDao
+                        .observeAttachmentsForOwners(
+                            AttachmentOwnerType.POST_COMMENT,
+                            commentIds
+                        )
+                        .mapLatest { attachments ->
+                            val attachmentsMap = attachments.groupBy { it.ownerId }
+                            commentList.mapNotNull { comment ->
+                                val author = userDao.getUserById(comment.authorId)
+                                val replyToUser = comment.replyToUserId?.let { userDao.getUserById(it) }
+                                if (author != null) {
+                                    CommentInfo(
+                                        comment = comment,
+                                        author = author,
+                                        replyToUser = replyToUser,
+                                        attachments = attachmentsMap[comment.id].orEmpty()
+                                    )
+                                } else {
+                                    null
+                                }
+                            }
+                        }
                 }
             }
         }
@@ -65,16 +91,43 @@ class SpacePostViewModel(
      * 加载空间动态
      */
     fun loadPosts() {
-        viewModelScope.launch {
-            spacePostDao.getSpacePosts(spaceId).collect { postList ->
-                val postsWithInfo = postList.map { post ->
-                    val author = userDao.getUserById(post.authorId)
-                    val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
-                    val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
-                    PostWithAuthorInfo(post, author, hasLiked, hasFavorited)
+        postsJob?.cancel()
+        postsJob = viewModelScope.launch {
+            spacePostDao.getSpacePosts(spaceId)
+                .flatMapLatest { postList ->
+                    if (postList.isEmpty()) {
+                        flowOf(emptyList())
+                    } else {
+                        val postIds = postList.map { it.id }
+                        mediaAttachmentDao
+                            .observeAttachmentsForOwners(
+                                AttachmentOwnerType.SPACE_POST,
+                                postIds
+                            )
+                            .mapLatest { attachments ->
+                                val attachmentsMap = attachments.groupBy { it.ownerId }
+                                postList.map { post ->
+                                    val author = userDao.getUserById(post.authorId)
+                                    val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
+                                    val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
+                                    PostWithAuthorInfo(
+                                        post = post,
+                                        author = author,
+                                        hasLiked = hasLiked,
+                                        hasFavorited = hasFavorited,
+                                        attachments = attachmentsMap[post.id].orEmpty()
+                                    )
+                                }
+                            }
+                    }
                 }
-                _posts.value = postsWithInfo
-            }
+                .collect { postsWithInfo ->
+                    _posts.value = postsWithInfo
+                    val selectedId = _selectedPostId.value
+                    if (selectedId != null) {
+                        _selectedPost.value = postsWithInfo.firstOrNull { it.post.id == selectedId }
+                    }
+                }
         }
     }
 
@@ -82,31 +135,74 @@ class SpacePostViewModel(
      * 发布新动态
      */
     suspend fun createPost(
-    content: String,
-    imageUris: List<String>? = null,
-    location: String? = null
-): Boolean {
-    return try {
-        val post = SpacePost(
-            spaceId = spaceId,
-            authorId = currentUserId,
-            content = content,
-            images = imageUris?.joinToString(","),
-            location = location
-        )
-        spacePostDao.createPost(post)
-        true
-    } catch (e: Exception) {
-        e.printStackTrace()
-        false
+        content: String,
+        attachments: List<ResolvedAttachment> = emptyList(),
+        location: String? = null
+    ): Boolean {
+        return try {
+            val imageUris = attachments
+                .filter { it.type == AttachmentType.IMAGE }
+                .map { it.uri }
+
+            val post = SpacePost(
+                spaceId = spaceId,
+                authorId = currentUserId,
+                content = content,
+                images = if (imageUris.isNotEmpty()) imageUris.joinToString(",") else null,
+                location = location
+            )
+
+            val postId = spacePostDao.createPost(post).toInt()
+
+            if (postId > 0 && attachments.isNotEmpty()) {
+                val entities = attachments.map {
+                    MediaAttachment(
+                        ownerType = AttachmentOwnerType.SPACE_POST,
+                        ownerId = postId,
+                        type = it.type.name,
+                        uri = it.uri,
+                        duration = it.duration
+                    )
+                }
+                mediaAttachmentDao.insertAttachments(entities)
+            }
+
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
-}
 
     /**
      * 删除动态
      */
     suspend fun deletePost(postId: Int): Boolean {
         return try {
+            val postAttachments = mediaAttachmentDao.getAttachments(AttachmentOwnerType.SPACE_POST, postId)
+            if (postAttachments.isNotEmpty()) {
+                cleanupAttachmentFiles(postAttachments)
+                mediaAttachmentDao.deleteAttachments(AttachmentOwnerType.SPACE_POST, postId)
+            }
+
+            // 删除评论附件
+            val comments = spacePostDao.getPostCommentsOnce(postId)
+            if (comments.isNotEmpty()) {
+                comments.forEach { comment ->
+                    val commentAttachments = mediaAttachmentDao.getAttachments(
+                        AttachmentOwnerType.POST_COMMENT,
+                        comment.id
+                    )
+                    if (commentAttachments.isNotEmpty()) {
+                        cleanupAttachmentFiles(commentAttachments)
+                        mediaAttachmentDao.deleteAttachments(
+                            AttachmentOwnerType.POST_COMMENT,
+                            comment.id
+                        )
+                    }
+                }
+            }
+
             spacePostDao.deletePost(postId)
             loadPosts()
             true
@@ -172,7 +268,18 @@ class SpacePostViewModel(
             if (post != null) {
                 val author = userDao.getUserById(post.authorId)
                 val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
-                _selectedPost.value = PostWithAuthorInfo(post, author, hasLiked)
+                val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
+                val attachments = mediaAttachmentDao.getAttachments(
+                    AttachmentOwnerType.SPACE_POST,
+                    post.id
+                )
+                _selectedPost.value = PostWithAuthorInfo(
+                    post = post,
+                    author = author,
+                    hasLiked = hasLiked,
+                    hasFavorited = hasFavorited,
+                    attachments = attachments
+                )
             }
         }
     }
@@ -184,19 +291,32 @@ class SpacePostViewModel(
         postId: Int,
         content: String,
         replyToUserId: Int? = null,
-        audioPath: String? = null,
-        audioDuration: Long? = null
+        attachments: List<ResolvedAttachment> = emptyList()
     ): Boolean {
         return try {
+            val audioAttachment = attachments.firstOrNull { it.type == AttachmentType.AUDIO }
             val comment = PostComment(
                 postId = postId,
                 authorId = currentUserId,
                 content = content,
-                audioPath = audioPath,
-                audioDuration = audioDuration,
+                audioPath = audioAttachment?.uri,
+                audioDuration = audioAttachment?.duration,
                 replyToUserId = replyToUserId
             )
-            spacePostDao.addCommentWithCount(comment)
+            val commentId = spacePostDao.addCommentWithCount(comment).toInt()
+
+            if (commentId > 0 && attachments.isNotEmpty()) {
+                val entities = attachments.map {
+                    MediaAttachment(
+                        ownerType = AttachmentOwnerType.POST_COMMENT,
+                        ownerId = commentId,
+                        type = it.type.name,
+                        uri = it.uri,
+                        duration = it.duration
+                    )
+                }
+                mediaAttachmentDao.insertAttachments(entities)
+            }
             
             // 发送评论通知
             context?.let { ctx ->
@@ -231,6 +351,18 @@ class SpacePostViewModel(
      */
     suspend fun deleteComment(commentId: Int, postId: Int): Boolean {
         return try {
+            val attachments = mediaAttachmentDao.getAttachments(
+                AttachmentOwnerType.POST_COMMENT,
+                commentId
+            )
+            if (attachments.isNotEmpty()) {
+                cleanupAttachmentFiles(attachments)
+                mediaAttachmentDao.deleteAttachments(
+                    AttachmentOwnerType.POST_COMMENT,
+                    commentId
+                )
+            }
+
             spacePostDao.deleteComment(commentId)
             spacePostDao.updateCommentCount(postId, -1)
             loadPosts()
@@ -238,6 +370,15 @@ class SpacePostViewModel(
         } catch (e: Exception) {
             e.printStackTrace()
             false
+        }
+    }
+
+    private fun cleanupAttachmentFiles(attachments: List<MediaAttachment>) {
+        attachments.forEach { attachment ->
+            when (AttachmentType.fromStorage(attachment.type)) {
+                AttachmentType.IMAGE -> ImageUtils.deleteImage(attachment.uri)
+                AttachmentType.AUDIO -> AudioUtils.deleteAudio(attachment.uri)
+            }
         }
     }
     
@@ -277,12 +418,27 @@ class SpacePostViewModel(
                     if (post != null) {
                         val author = userDao.getUserById(post.authorId)
                         val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
-                        PostWithAuthorInfo(post, author, hasLiked, hasFavorited = true)
+                        val attachments = mediaAttachmentDao.getAttachments(
+                            AttachmentOwnerType.SPACE_POST,
+                            post.id
+                        )
+                        PostWithAuthorInfo(
+                            post = post,
+                            author = author,
+                            hasLiked = hasLiked,
+                            hasFavorited = true,
+                            attachments = attachments
+                        )
                     } else null
                 }
                 _favoritePosts.value = favoritePosts
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        postsJob?.cancel()
     }
 }
 
@@ -293,7 +449,8 @@ data class PostWithAuthorInfo(
     val post: SpacePost,
     val author: User?,
     val hasLiked: Boolean = false,
-    val hasFavorited: Boolean = false
+    val hasFavorited: Boolean = false,
+    val attachments: List<MediaAttachment> = emptyList()
 )
 
 /**
@@ -302,5 +459,6 @@ data class PostWithAuthorInfo(
 data class CommentInfo(
     val comment: PostComment,
     val author: User,
-    val replyToUser: User? = null
+    val replyToUser: User? = null,
+    val attachments: List<MediaAttachment> = emptyList()
 )

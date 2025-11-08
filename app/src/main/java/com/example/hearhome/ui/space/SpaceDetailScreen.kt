@@ -1,17 +1,11 @@
 package com.example.hearhome.ui.space
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -20,20 +14,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import coil.compose.rememberImagePainter
 import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.model.AttachmentType
+import com.example.hearhome.model.PendingAttachment
 import com.example.hearhome.ui.components.EmojiTextField
-import com.example.hearhome.utils.ImageUtils
-import com.example.hearhome.utils.TestUtils
+import com.example.hearhome.ui.components.attachments.AttachmentSelector
+import com.example.hearhome.ui.components.attachments.AttachmentAudioList
+import com.example.hearhome.ui.components.attachments.AttachmentGallery
+import com.example.hearhome.utils.AttachmentFileHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.io.File
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -67,6 +64,7 @@ fun SpaceDetailScreen(
             db.spacePostDao(),
             db.userDao(),
             db.postFavoriteDao(),
+            db.mediaAttachmentDao(),
             spaceId,
             currentUserId,
             context
@@ -220,16 +218,16 @@ fun SpaceDetailScreen(
     if (showPostDialog) {
         CreatePostScreen(
             onDismiss = { showPostDialog = false },
-            onPost = { content, imageUris ->
+            onPost = { content, pendingAttachments ->
                 scope.launch {
-                    // 先保存图片到内部存储
-                    val savedImagePaths = ImageUtils.saveImagesToInternalStorage(
-                        context, 
-                        imageUris.map { Uri.parse(it) }
-                    )
-                    
+                    val resolvedAttachments = withContext(Dispatchers.IO) {
+                        AttachmentFileHelper.resolvePendingAttachments(
+                            context,
+                            pendingAttachments
+                        )
+                    }
                     // 发布动态
-                    val success = postViewModel.createPost(content, savedImagePaths)
+                    val success = postViewModel.createPost(content, resolvedAttachments)
                     if (success) {
                         showPostDialog = false
                         postViewModel.loadPosts() // Manually refresh posts
@@ -424,25 +422,33 @@ fun PostCard(
                 style = MaterialTheme.typography.bodyMedium
             )
 
-            // 图片显示
-            if (!post.images.isNullOrEmpty()) {
+            val legacyImagePaths = post.images
+                ?.split(",")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                .orEmpty()
+            val hasImageAttachments = postInfo.attachments.any {
+                AttachmentType.fromStorage(it.type) == AttachmentType.IMAGE
+            } || legacyImagePaths.isNotEmpty()
+            if (hasImageAttachments) {
                 Spacer(Modifier.height(12.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(post.images.split(",").filter { it.isNotBlank() }) { imagePath ->
-                        // 从文件路径加载图片
-                        val imageFile = File(imagePath)
-                        if (imageFile.exists()) {
-                            Image(
-                                painter = rememberImagePainter(data = imageFile),
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .height(150.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-                    }
-                }
+                AttachmentGallery(
+                    attachments = postInfo.attachments,
+                    legacyImagePaths = legacyImagePaths,
+                    imageHeight = 150.dp,
+                    cornerRadius = 8.dp
+                )
+            }
+
+            val hasAudioAttachments = postInfo.attachments.any {
+                AttachmentType.fromStorage(it.type) == AttachmentType.AUDIO
+            }
+            if (hasAudioAttachments) {
+                Spacer(Modifier.height(12.dp))
+                AttachmentAudioList(
+                    attachments = postInfo.attachments,
+                    audioItemModifier = Modifier.fillMaxWidth()
+                )
             }
 
             // 定位信息
@@ -509,17 +515,10 @@ fun PostCard(
 @Composable
 fun CreatePostScreen(
     onDismiss: () -> Unit,
-    onPost: (String, List<String>) -> Unit
+    onPost: (String, List<PendingAttachment>) -> Unit
 ) {
-    val context = LocalContext.current
     var content by remember { mutableStateOf("") }
-    var imageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
-
-    val imagePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetMultipleContents()
-    ) { uris: List<Uri> ->
-        imageUris = uris
-    }
+    var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -535,76 +534,21 @@ fun CreatePostScreen(
                     minHeight = 150
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { imagePickerLauncher.launch("image/*") }) {
-                        Icon(Icons.Default.AddPhotoAlternate, "添加图片")
-                        Spacer(Modifier.width(4.dp))
-                        Text("添加图片")
-                    }
-                    
-                    // 测试按钮（仅模拟器显示）
-                    if (TestUtils.isEmulator()) {
-                        OutlinedButton(
-                            onClick = {
-                                val mockImage = TestUtils.createMockImageFile(context)
-                                if (mockImage != null) {
-                                    imageUris = imageUris + Uri.fromFile(mockImage)
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Default.Science, null, Modifier.size(20.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("生成测试图")
-                        }
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(imageUris) { uri ->
-                        Box {
-                            Image(
-                                painter = rememberImagePainter(uri),
-                                contentDescription = null,
-                                modifier = Modifier
-                                    .size(80.dp)
-                                    .clip(RoundedCornerShape(8.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                            // 删除按钮
-                            IconButton(
-                                onClick = {
-                                    imageUris = imageUris.filter { it != uri }
-                                },
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .size(24.dp)
-                                    .background(
-                                        Color.Black.copy(alpha = 0.5f),
-                                        shape = CircleShape
-                                    )
-                            ) {
-                                Icon(
-                                    Icons.Default.Close,
-                                    contentDescription = "删除",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-                }
+                AttachmentSelector(
+                    attachments = attachments,
+                    onAttachmentsChange = { attachments = it },
+                    enableTestTools = true
+                )
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (content.isNotBlank() || imageUris.isNotEmpty()) {
-                        onPost(content, imageUris.map { it.toString() })
+                    if (content.isNotBlank() || attachments.isNotEmpty()) {
+                        onPost(content, attachments)
                     }
                 },
-                enabled = content.isNotBlank() || imageUris.isNotEmpty()
+                enabled = content.isNotBlank() || attachments.isNotEmpty()
             ) {
                 Text("发布")
             }
