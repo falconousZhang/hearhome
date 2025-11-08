@@ -54,6 +54,7 @@ fun SpaceDetailScreen(
         factory = SpaceViewModelFactory(
             db.spaceDao(),
             db.userDao(),
+            db.coupleDao(),
             currentUserId
         )
     )
@@ -76,6 +77,7 @@ fun SpaceDetailScreen(
     val currentUserRole by spaceViewModel.currentUserRole.collectAsState()
     val spaceMembers by spaceViewModel.spaceMembers.collectAsState()
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     
     // 判断是否有管理权限（管理员或所有者）
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
@@ -84,6 +86,7 @@ fun SpaceDetailScreen(
     var showPostDialog by remember { mutableStateOf(false) }
     var showMembersDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    var showDissolveDialog by remember { mutableStateOf(false) }
     
     // 加载空间信息和用户角色
     LaunchedEffect(spaceId) {
@@ -91,6 +94,7 @@ fun SpaceDetailScreen(
     }
     
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(currentSpace?.name ?: "空间") },

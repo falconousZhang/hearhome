@@ -83,6 +83,7 @@ fun RelationListScreen(
     val userDao = db.userDao()
     val friendDao = db.friendDao()
     val coupleDao = db.coupleDao()
+    val spaceDao = db.spaceDao()
 
     val currentUser by userDao.findById(currentUserId).collectAsState(initial = null)
 
@@ -158,12 +159,22 @@ fun RelationListScreen(
                     onClick = {
                         scope.launch {
                             withContext(Dispatchers.IO) {
-                                coupleDao.deleteRelationship(currentUserId)
-                                 // 更新双方状态
-                                val partnerId = coupleInfo?.user?.uid
-                                userDao.updateRelationshipStatus(currentUserId, "single", null)
+                                val currentCouple = coupleDao.getCurrentCouple(currentUserId)
+                                val partnerId = currentCouple?.let {
+                                    if (it.requesterId == currentUserId) it.partnerId else it.requesterId
+                                }
                                 if (partnerId != null) {
+                                    val coupleSpace = spaceDao.findActiveCoupleSpace(currentUserId, partnerId)
+                                    if (coupleSpace != null) {
+                                        spaceDao.archiveSpace(coupleSpace.id)
+                                        spaceDao.updateMembersStatusBySpace(coupleSpace.id, "left")
+                                    }
+                                    coupleDao.deleteRelationshipBetween(currentUserId, partnerId)
+                                    userDao.updateRelationshipStatus(currentUserId, "single", null)
                                     userDao.updateRelationshipStatus(partnerId, "single", null)
+                                } else {
+                                    coupleDao.deleteRelationship(currentUserId)
+                                    userDao.updateRelationshipStatus(currentUserId, "single", null)
                                 }
                             }
                             showDeleteCoupleDialog = false

@@ -69,6 +69,20 @@ interface SpaceDao {
     fun getSpacesJoinedByUser(userId: Int): Flow<List<Space>>
     
     /**
+     * 查询用户是否已有活跃的情侣空间
+     */
+    @Query("""
+        SELECT s.* FROM spaces s
+        INNER JOIN space_members sm ON s.id = sm.spaceId
+        WHERE sm.userId = :userId
+          AND sm.status = 'active'
+          AND s.status = 'active'
+          AND s.type = 'couple'
+        LIMIT 1
+    """)
+    suspend fun findActiveCoupleSpaceForUser(userId: Int): Space?
+    
+    /**
      * 更新空间信息
      */
     @Query("UPDATE spaces SET name = :name, description = :description WHERE id = :spaceId")
@@ -191,4 +205,10 @@ interface SpaceDao {
      */
     @Query("SELECT COUNT(*) FROM space_members WHERE spaceId = :spaceId AND status = 'active'")
     suspend fun getSpaceMemberCount(spaceId: Int): Int
+
+    /**
+     * 批量更新指定空间成员状态
+     */
+    @Query("UPDATE space_members SET status = :status WHERE spaceId = :spaceId")
+    suspend fun updateMembersStatusBySpace(spaceId: Int, status: String)
 }

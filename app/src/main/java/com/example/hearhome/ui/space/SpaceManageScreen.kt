@@ -44,6 +44,7 @@ fun SpaceManageScreen(
         factory = SpaceViewModelFactory(
             db.spaceDao(),
             db.userDao(),
+            db.coupleDao(),
             currentUserId
         )
     )

@@ -14,6 +14,7 @@ import kotlin.random.Random
 class SpaceViewModel(
     private val spaceDao: SpaceDao,
     private val userDao: UserDao,
+    private val coupleDao: CoupleDao,
     private val currentUserId: Int
 ) : ViewModel() {
 
@@ -118,36 +119,136 @@ class SpaceViewModel(
     suspend fun createSpace(
         name: String,
         type: String,
-        description: String? = null
-    ): Int? {
+        description: String? = null,
+        partnerUserId: Int? = null
+    ): CreateSpaceResult {
         return try {
-            // 生成唯一邀请码
             val inviteCode = generateUniqueInviteCode()
-            
-            val space = Space(
-                name = name,
-                type = type,
-                description = description,
-                creatorId = currentUserId,
-                inviteCode = inviteCode
-            )
-            
-            val spaceId = spaceDao.createSpace(space).toInt()
-            
-            // 自动将创建者加入空间并设为所有者
-            val creatorMember = SpaceMember(
-                spaceId = spaceId,
-                userId = currentUserId,
-                role = "owner",
-                status = "active"
-            )
-            spaceDao.addSpaceMember(creatorMember)
-            
-            loadMySpaces()
-            spaceId
+
+            when (type) {
+                "couple" -> {
+                    val partnerId = partnerUserId
+                        ?: return CreateSpaceResult.Failure("请选择要邀请的情侣成员")
+                    if (partnerId == currentUserId) {
+                        return CreateSpaceResult.Failure("情侣空间必须邀请另一位成员")
+                    }
+
+                    val creatorActiveCouple = spaceDao.findActiveCoupleSpaceForUser(currentUserId)
+                    if (creatorActiveCouple != null) {
+                        return CreateSpaceResult.Failure("您已经拥有情侣空间，无法重复创建")
+                    }
+                    val partnerActiveCouple = spaceDao.findActiveCoupleSpaceForUser(partnerId)
+                    if (partnerActiveCouple != null) {
+                        return CreateSpaceResult.Failure("对方已在其他情侣空间中")
+                    }
+
+                    val currentUser = userDao.getUserById(currentUserId)
+                        ?: return CreateSpaceResult.Failure("用户信息获取失败")
+                    val partnerUser = userDao.getUserById(partnerId)
+                        ?: return CreateSpaceResult.Failure("邀请成员不存在")
+
+                    val existingSpace = spaceDao.findActiveCoupleSpace(currentUserId, partnerId)
+                    if (existingSpace != null) {
+                        return CreateSpaceResult.Failure("你们已经拥有情侣空间")
+                    }
+
+                    if (currentUser.relationshipStatus == "in_relationship" && currentUser.partnerId != partnerId) {
+                        return CreateSpaceResult.Failure("您正在与其他用户处于情侣关系，无法创建新的情侣空间")
+                    }
+                    if (partnerUser.relationshipStatus == "in_relationship" && partnerUser.partnerId != currentUserId) {
+                        return CreateSpaceResult.Failure("对方已经与其他用户建立情侣关系，无法加入")
+                    }
+
+                    val existingRelationship = coupleDao.getCoupleRelationship(currentUserId, partnerId)
+                    when (existingRelationship?.status) {
+                        "pending" -> {
+                            return if (existingRelationship.requesterId == currentUserId) {
+                                CreateSpaceResult.RequestSent("邀请已发送，对方同意后将自动创建情侣空间")
+                            } else {
+                                CreateSpaceResult.Failure("对方已向您发出情侣邀请，请在情侣申请列表中处理")
+                            }
+                        }
+                        "accepted" -> {
+                            // 已互为情侣关系，直接创建空间
+                            val space = Space(
+                                name = name,
+                                type = "couple",
+                                description = description,
+                                creatorId = currentUserId,
+                                inviteCode = inviteCode
+                            )
+
+                            val spaceId = spaceDao.createSpace(space).toInt()
+
+                            spaceDao.addSpaceMember(
+                                SpaceMember(
+                                    spaceId = spaceId,
+                                    userId = currentUserId,
+                                    role = "owner",
+                                    status = "active"
+                                )
+                            )
+                            spaceDao.addSpaceMember(
+                                SpaceMember(
+                                    spaceId = spaceId,
+                                    userId = partnerId,
+                                    role = "member",
+                                    status = "active"
+                                )
+                            )
+
+                            if (currentUser.relationshipStatus != "in_relationship" || currentUser.partnerId != partnerId) {
+                                userDao.updateRelationshipStatus(currentUserId, "in_relationship", partnerId)
+                            }
+                            if (partnerUser.relationshipStatus != "in_relationship" || partnerUser.partnerId != currentUserId) {
+                                userDao.updateRelationshipStatus(partnerId, "in_relationship", currentUserId)
+                            }
+
+                            loadMySpaces()
+                            CreateSpaceResult.Success(spaceId, "情侣空间创建成功")
+                        }
+                        else -> {
+                            // 未建立情侣关系，发起申请
+                            val newRequest = Couple(
+                                requesterId = currentUserId,
+                                partnerId = partnerId,
+                                createdAt = System.currentTimeMillis()
+                            )
+                            coupleDao.insertRequest(newRequest)
+                            CreateSpaceResult.RequestSent(
+                                "已向 ${partnerUser.displayName()} 发送情侣邀请，对方同意后将自动创建情侣空间"
+                            )
+                        }
+                    }
+                }
+
+                else -> {
+                    val space = Space(
+                        name = name,
+                        type = type,
+                        description = description,
+                        creatorId = currentUserId,
+                        inviteCode = inviteCode
+                    )
+
+                    val spaceId = spaceDao.createSpace(space).toInt()
+
+                    spaceDao.addSpaceMember(
+                        SpaceMember(
+                            spaceId = spaceId,
+                            userId = currentUserId,
+                            role = "owner",
+                            status = "active"
+                        )
+                    )
+
+                    loadMySpaces()
+                    CreateSpaceResult.Success(spaceId, "空间创建成功")
+                }
+            }
         } catch (e: Exception) {
             e.printStackTrace()
-            null
+            CreateSpaceResult.Failure("创建空间失败，请稍后再试")
         }
     }
 
@@ -257,6 +358,70 @@ suspend fun joinSpaceByCode(inviteCode: String): JoinSpaceResult {
     }
 
     /**
+     * 解散空间（仅所有者）
+     */
+    suspend fun dissolveSpace(spaceId: Int): DissolveSpaceResult {
+        return try {
+            val space = spaceDao.getSpaceById(spaceId) ?: return DissolveSpaceResult.Failure("空间不存在")
+            val myMember = spaceDao.getSpaceMember(spaceId, currentUserId)
+                ?: return DissolveSpaceResult.Failure("您不在该空间中")
+            if (myMember.role != "owner") {
+                return DissolveSpaceResult.Failure("只有空间所有者可以解散空间")
+            }
+
+            val members = spaceDao.getSpaceMembers(spaceId)
+            val memberIds = members.map { it.userId }
+
+            spaceDao.archiveSpace(spaceId)
+            spaceDao.updateMembersStatusBySpace(spaceId, "left")
+
+            if (space.type == "couple") {
+                if (memberIds.size >= 2) {
+                    val userA = memberIds[0]
+                    val userB = memberIds[1]
+
+                    coupleDao.deleteRelationshipBetween(userA, userB)
+
+                    val userAInfo = userDao.getUserById(userA)
+                    if (userAInfo?.partnerId == userB) {
+                        userDao.updateRelationshipStatus(userA, "single", null)
+                    }
+                    val userBInfo = userDao.getUserById(userB)
+                    if (userBInfo?.partnerId == userA) {
+                        userDao.updateRelationshipStatus(userB, "single", null)
+                    }
+                } else if (memberIds.isNotEmpty()) {
+                    val userId = memberIds.first()
+                    coupleDao.deleteRelationship(userId)
+                    val userInfo = userDao.getUserById(userId)
+                    if (userInfo?.relationshipStatus == "in_relationship") {
+                        userDao.updateRelationshipStatus(userId, "single", null)
+                    }
+                }
+            }
+
+            if (_currentSpace.value?.id == spaceId) {
+                _currentSpace.value = null
+                _spaceMembers.value = emptyList()
+                _pendingMembers.value = emptyList()
+                _currentUserRole.value = null
+            }
+
+            loadMySpaces()
+
+            val message = if (space.type == "couple") {
+                "情侣空间已解散，情侣关系已解除"
+            } else {
+                "空间已解散"
+            }
+            DissolveSpaceResult.Success(message)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            DissolveSpaceResult.Failure("解散空间失败，请稍后再试")
+        }
+    }
+
+    /**
      * 审核通过加入申请
      */
     suspend fun approveMember(memberId: Int): Boolean {
@@ -360,8 +525,21 @@ data class SpaceMemberInfo(
     val user: User
 )
 
+private fun User.displayName(): String = nickname.ifBlank { email }
+
+sealed class CreateSpaceResult {
+    data class Success(val spaceId: Int, val message: String? = null) : CreateSpaceResult()
+    data class RequestSent(val message: String) : CreateSpaceResult()
+    data class Failure(val message: String) : CreateSpaceResult()
+}
+
 sealed class JoinSpaceResult {
     data class Joined(val space: Space, val message: String? = null) : JoinSpaceResult()
     data class RequestPending(val space: Space, val message: String) : JoinSpaceResult()
     data class Failure(val message: String) : JoinSpaceResult()
+}
+
+sealed class DissolveSpaceResult {
+    data class Success(val message: String) : DissolveSpaceResult()
+    data class Failure(val message: String) : DissolveSpaceResult()
 }

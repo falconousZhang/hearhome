@@ -30,8 +30,12 @@ import com.example.hearhome.model.PendingAttachment
 import com.example.hearhome.ui.components.AudioPlayer
 import com.example.hearhome.ui.components.AudioRecorder
 import com.example.hearhome.utils.AudioUtils
+import com.example.hearhome.utils.ImageUtils
 import com.example.hearhome.utils.TestUtils
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 通用附件选择器，支持图片和语音，并提供预览和删除能力
@@ -48,23 +52,32 @@ fun AttachmentSelector(
 ) {
     val context = LocalContext.current
     var showAudioRecorder by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetMultipleContents()
     ) { uris: List<Uri> ->
-        if (uris.isNotEmpty()) {
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+
+        scope.launch {
             val currentImageCount = attachments.count { it.type == AttachmentType.IMAGE }
             val availableSlots = (maxImageCount - currentImageCount).coerceAtLeast(0)
-            val picked = if (availableSlots > 0) uris.take(availableSlots) else emptyList()
-            if (picked.isNotEmpty()) {
-                val newAttachments = picked.map {
-                    PendingAttachment(
-                        type = AttachmentType.IMAGE,
-                        source = it.toString(),
-                        fromContentUri = true
-                    )
+            if (availableSlots <= 0) return@launch
+
+            val pending = withContext(Dispatchers.IO) {
+                uris.take(availableSlots).mapNotNull { uri ->
+                    ImageUtils.saveImageToInternalStorage(context, uri)?.let { savedPath ->
+                        PendingAttachment(
+                            type = AttachmentType.IMAGE,
+                            source = savedPath,
+                            fromContentUri = false
+                        )
+                    }
                 }
-                onAttachmentsChange(attachments + newAttachments)
+            }
+
+            if (pending.isNotEmpty()) {
+                onAttachmentsChange(attachments + pending)
             }
         }
     }

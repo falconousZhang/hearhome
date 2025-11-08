@@ -24,8 +24,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.data.local.Space
+import com.example.hearhome.data.local.User
 import com.example.hearhome.ui.components.AppBottomNavigation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 空间列表界面
@@ -44,6 +47,7 @@ fun SpaceListScreen(
         factory = SpaceViewModelFactory(
             db.spaceDao(),
             db.userDao(),
+            db.coupleDao(),
             currentUserId
         )
     )
@@ -51,11 +55,48 @@ fun SpaceListScreen(
     val mySpaces by viewModel.mySpaces.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val friendDao = remember { db.friendDao() }
+    val userDao = remember { db.userDao() }
+
+    var coupleCandidates by remember { mutableStateOf<List<User>>(emptyList()) }
+    var partnerUser by remember { mutableStateOf<User?>(null) }
+    var currentUser by remember { mutableStateOf<User?>(null) }
+    var coupleCandidatesLoading by remember { mutableStateOf(false) }
     
     // 对话框状态
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
     
+    LaunchedEffect(showCreateDialog) {
+        if (showCreateDialog) {
+            coupleCandidatesLoading = true
+            val user = withContext(Dispatchers.IO) { userDao.getUserById(currentUserId) }
+            val friends = withContext(Dispatchers.IO) { friendDao.getAcceptedFriendsWithUsers(currentUserId) }
+            val candidates = friends.mapNotNull { info ->
+                when (info.friend.senderId) {
+                    currentUserId -> info.receiver
+                    else -> if (info.friend.receiverId == currentUserId) info.sender else null
+                }
+            }
+                .filter { it.uid != currentUserId }
+                .filter { it.relationshipStatus != "in_relationship" || it.partnerId == currentUserId }
+            val uniqueCandidates = candidates.associateBy { it.uid }.values.toList()
+
+            val partner = if (user?.partnerId != null && user.partnerId != currentUserId) {
+                uniqueCandidates.firstOrNull { it.uid == user.partnerId } ?: withContext(Dispatchers.IO) {
+                    userDao.getUserById(user.partnerId)
+                }
+            } else {
+                null
+            }
+
+            currentUser = user
+            coupleCandidates = uniqueCandidates
+            partnerUser = partner
+            coupleCandidatesLoading = false
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
@@ -138,16 +179,32 @@ fun SpaceListScreen(
     
     // 创建空间对话框
     if (showCreateDialog) {
+        val hasActiveCoupleSpace = mySpaces.any { it.type == "couple" }
         CreateSpaceDialog(
             onDismiss = { showCreateDialog = false },
-            onCreate = { name, type, description ->
+            onCreate = { name, type, description, partnerId ->
                 scope.launch {
-                    val success = viewModel.createSpace(name, type, description) != null
-                    if (success) {
-                        showCreateDialog = false
+                    when (val result = viewModel.createSpace(name, type, description, partnerId)) {
+                        is CreateSpaceResult.Success -> {
+                            showCreateDialog = false
+                            val message = result.message ?: "空间创建成功"
+                            snackbarHostState.showSnackbar(message)
+                        }
+                        is CreateSpaceResult.RequestSent -> {
+                            showCreateDialog = false
+                            snackbarHostState.showSnackbar(result.message)
+                        }
+                        is CreateSpaceResult.Failure -> {
+                            snackbarHostState.showSnackbar(result.message)
+                        }
                     }
                 }
-            }
+            },
+            currentUser = currentUser,
+            coupleCandidates = coupleCandidates,
+            partnerUser = partnerUser,
+            hasActiveCoupleSpace = hasActiveCoupleSpace,
+            isLoadingCoupleCandidates = coupleCandidatesLoading
         )
     }
     
@@ -245,11 +302,46 @@ fun SpaceCard(
 @Composable
 fun CreateSpaceDialog(
     onDismiss: () -> Unit,
-    onCreate: (String, String, String?) -> Unit
+    onCreate: (String, String, String?, Int?) -> Unit,
+    currentUser: User?,
+    coupleCandidates: List<User>,
+    partnerUser: User?,
+    hasActiveCoupleSpace: Boolean,
+    isLoadingCoupleCandidates: Boolean
 ) {
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf("family") }
     var description by remember { mutableStateOf("") }
+    var selectedPartnerId by remember { mutableStateOf<Int?>(partnerUser?.uid) }
+
+    val candidateList = remember(coupleCandidates, partnerUser, currentUser?.uid) {
+        buildList {
+            partnerUser?.let { partner ->
+                if (partner.uid != currentUser?.uid) {
+                    add(partner)
+                }
+            }
+            coupleCandidates.forEach { candidate ->
+                if (candidate.uid != currentUser?.uid && candidate.uid != partnerUser?.uid) {
+                    add(candidate)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(type, partnerUser?.uid) {
+        if (type == "couple" && partnerUser != null) {
+            selectedPartnerId = partnerUser.uid
+        } else if (type != "couple") {
+            selectedPartnerId = null
+        }
+    }
+
+    LaunchedEffect(type, candidateList) {
+        if (type == "couple" && candidateList.isEmpty()) {
+            selectedPartnerId = null
+        }
+    }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -292,6 +384,72 @@ fun CreateSpaceDialog(
                     modifier = Modifier.fillMaxWidth(),
                     maxLines = 3
                 )
+
+                if (type == "couple") {
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "请选择邀请的情侣成员(仅限一人)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                    Spacer(Modifier.height(8.dp))
+
+                    if (hasActiveCoupleSpace) {
+                        AssistChip(
+                            onClick = {},
+                            enabled = false,
+                            label = { Text("您已经拥有情侣空间，无法再次创建") }
+                        )
+                    } else if (isLoadingCoupleCandidates) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                    } else if (candidateList.isEmpty()) {
+                        Text(
+                            "暂无可邀请的成员，请先添加好友或建立情侣关系。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            candidateList.forEach { candidate ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(MaterialTheme.shapes.medium)
+                                        .clickable { selectedPartnerId = candidate.uid }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = selectedPartnerId == candidate.uid,
+                                        onClick = { selectedPartnerId = candidate.uid }
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text(candidate.nickname.ifBlank { candidate.email })
+                                        if (candidate.relationshipStatus == "in_relationship" && candidate.partnerId == currentUser?.uid) {
+                                            Text(
+                                                "当前已与您是情侣关系",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        } else if (candidate.relationshipStatus == "in_relationship") {
+                                            Text(
+                                                "对方正在情侣关系中",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -301,11 +459,16 @@ fun CreateSpaceDialog(
                         onCreate(
                             name, 
                             type, 
-                            description.ifBlank { null }
+                            description.ifBlank { null },
+                            if (type == "couple") selectedPartnerId else null
                         )
                     }
                 },
-                enabled = name.isNotBlank()
+                enabled = name.isNotBlank() && (
+                    if (type == "couple") {
+                        !hasActiveCoupleSpace && !isLoadingCoupleCandidates && selectedPartnerId != null
+                    } else true
+                )
             ) {
                 Text("创建")
             }
