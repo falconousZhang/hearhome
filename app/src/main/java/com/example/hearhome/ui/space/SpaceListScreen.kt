@@ -50,12 +50,14 @@ fun SpaceListScreen(
     
     val mySpaces by viewModel.mySpaces.collectAsState()
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
     
     // 对话框状态
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
     
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("我的空间") },
@@ -155,9 +157,19 @@ fun SpaceListScreen(
             onDismiss = { showJoinDialog = false },
             onJoin = { inviteCode ->
                 scope.launch {
-                    val space = viewModel.joinSpaceByCode(inviteCode)
-                    if (space != null) {
-                        showJoinDialog = false
+                    when (val result = viewModel.joinSpaceByCode(inviteCode)) {
+                        is JoinSpaceResult.Joined -> {
+                            showJoinDialog = false
+                            val message = result.message ?: "成功加入「${result.space.name}」"
+                            snackbarHostState.showSnackbar(message)
+                        }
+                        is JoinSpaceResult.RequestPending -> {
+                            showJoinDialog = false
+                            snackbarHostState.showSnackbar(result.message)
+                        }
+                        is JoinSpaceResult.Failure -> {
+                            snackbarHostState.showSnackbar(result.message)
+                        }
                     }
                 }
             }

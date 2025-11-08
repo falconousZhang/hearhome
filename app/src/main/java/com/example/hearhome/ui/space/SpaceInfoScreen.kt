@@ -188,6 +188,7 @@ private fun MemberCard(member: SpaceMember, user: User) {
                 )
                 Text(
                     text = when (member.role) {
+                        "owner" -> "所有者"
                         "admin" -> "管理员"
                         "member" -> "成员"
                         else -> "未知角色"
@@ -197,12 +198,13 @@ private fun MemberCard(member: SpaceMember, user: User) {
                 )
             }
             
-            if (member.status != "approved") {
+            if (member.status != "active") {
                 Badge {
                     Text(
                         when (member.status) {
                             "pending" -> "待审核"
                             "rejected" -> "已拒绝"
+                            "left" -> "已退出"
                             else -> member.status
                         }
                     )

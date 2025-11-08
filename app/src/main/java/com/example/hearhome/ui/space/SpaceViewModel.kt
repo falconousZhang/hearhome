@@ -164,67 +164,95 @@ class SpaceViewModel(
 
     /**
      * 通过邀请码加入空间
-     * @return 成功返回空间信息,失败返回null
      */
-    suspend fun joinSpaceByCode(inviteCode: String): Space? {
+suspend fun joinSpaceByCode(inviteCode: String): JoinSpaceResult {
         return try {
-            val space = spaceDao.getSpaceByInviteCode(inviteCode) ?: return null
-            
-            // 检查是否已是成员
+            val space = spaceDao.getSpaceByInviteCode(inviteCode)
+                ?: return JoinSpaceResult.Failure("邀请码无效或空间不存在")
+
             val existingMember = spaceDao.getSpaceMember(space.id, currentUserId)
-            if (existingMember != null && existingMember.status == "active") {
-                return space // 已经是成员
+            if (existingMember != null) {
+                when (existingMember.status) {
+                    "active" -> return JoinSpaceResult.Joined(space, "您已经在该空间中了")
+                    "pending" -> return JoinSpaceResult.RequestPending(space, "加入申请正在审核中，请耐心等待")
+                    "left" -> {
+                        // 继续执行后续逻辑，重新加入或发起申请
+                    }
+                    else -> {
+                        // 未知状态，继续执行以便重新设置状态
+                    }
+                }
             }
 
-            val currentUser = userDao.getUserById(currentUserId) ?: return null
-            
-            // 根据空间类型决定是否需要审核
-            if (space.type == "couple") {
-                // 情侣空间最多两人，且只能情侣关系加入
-                val activeCount = spaceDao.getSpaceMemberCount(space.id)
-                if (activeCount >= 2) {
-                    return null
-                }
-                val partnerId = currentUser.partnerId
-                if (currentUser.relationshipStatus != "in_relationship" || partnerId == null) {
-                    return null
-                }
-                val partnerMember = spaceDao.getSpaceMember(space.id, partnerId)
-                if (partnerMember == null || partnerMember.status != "active") {
-                    return null
-                }
+            val currentUser = userDao.getUserById(currentUserId)
+                ?: return JoinSpaceResult.Failure("用户信息获取失败")
 
-                if (existingMember != null) {
-                    spaceDao.updateMemberStatus(existingMember.id, "active")
-                } else {
-                    spaceDao.addSpaceMember(
-                        SpaceMember(
-                            spaceId = space.id,
-                            userId = currentUserId,
-                            role = "member",
-                            status = "active"
+            when (space.type) {
+                "couple" -> {
+                    val activeCount = spaceDao.getSpaceMemberCount(space.id)
+                    if (activeCount >= 2) {
+                        return JoinSpaceResult.Failure("该情侣空间成员已满")
+                    }
+                    val partnerId = currentUser.partnerId
+                    if (currentUser.relationshipStatus != "in_relationship" || partnerId == null) {
+                        return JoinSpaceResult.Failure("您不是该情侣空间的成员，无法加入")
+                    }
+                    val partnerMember = spaceDao.getSpaceMember(space.id, partnerId)
+                    if (partnerMember == null || partnerMember.status != "active") {
+                        return JoinSpaceResult.Failure("您的伴侣尚未加入该情侣空间，无法加入")
+                    }
+
+                    if (existingMember != null) {
+                        spaceDao.updateMemberStatus(existingMember.id, "active")
+                    } else {
+                        spaceDao.addSpaceMember(
+                            SpaceMember(
+                                spaceId = space.id,
+                                userId = currentUserId,
+                                role = "member",
+                                status = "active"
+                            )
                         )
-                    )
+                    }
+                    loadMySpaces()
+                    return JoinSpaceResult.Joined(space, "成功加入情侣空间")
                 }
-                loadMySpaces()
-                return space
+
+                "family" -> {
+                    if (existingMember != null) {
+                        spaceDao.updateMemberStatus(existingMember.id, "pending")
+                    } else {
+                        spaceDao.addSpaceMember(
+                            SpaceMember(
+                                spaceId = space.id,
+                                userId = currentUserId,
+                                status = "pending"
+                            )
+                        )
+                    }
+                    loadMySpaces()
+                    return JoinSpaceResult.RequestPending(space, "加入家族空间请求已发送！")
+                }
+
+                else -> {
+                    if (existingMember != null) {
+                        spaceDao.updateMemberStatus(existingMember.id, "active")
+                    } else {
+                        spaceDao.addSpaceMember(
+                            SpaceMember(
+                                spaceId = space.id,
+                                userId = currentUserId,
+                                status = "active"
+                            )
+                        )
+                    }
+                    loadMySpaces()
+                    return JoinSpaceResult.Joined(space, "成功加入空间")
+                }
             }
-            
-            val member = SpaceMember(
-                spaceId = space.id,
-                userId = currentUserId,
-                status = when (space.type) {
-                    "family" -> "pending"
-                    else -> "active"
-                }
-            )
-            spaceDao.addSpaceMember(member)
-            
-            loadMySpaces()
-            space
         } catch (e: Exception) {
             e.printStackTrace()
-            null
+            JoinSpaceResult.Failure("加入空间失败，请稍后再试")
         }
     }
 
@@ -331,3 +359,9 @@ data class SpaceMemberInfo(
     val member: SpaceMember,
     val user: User
 )
+
+sealed class JoinSpaceResult {
+    data class Joined(val space: Space, val message: String? = null) : JoinSpaceResult()
+    data class RequestPending(val space: Space, val message: String) : JoinSpaceResult()
+    data class Failure(val message: String) : JoinSpaceResult()
+}

@@ -120,9 +120,6 @@ private fun AttachmentImageItem(
         modifier = modifier,
         contentScale = ContentScale.Crop
     )
-    if (imageWidth == null) {
-        Spacer(modifier = Modifier)
-    }
 }
 
 private fun resolveCoilData(path: String): Any {
