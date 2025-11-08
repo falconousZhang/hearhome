@@ -42,4 +42,11 @@ interface CoupleDao {
     // 查询两人之间是否存在任何情侣关系（无论状态）
     @Query("SELECT * FROM couples WHERE (requesterId = :userA AND partnerId = :userB) OR (requesterId = :userB AND partnerId = :userA) LIMIT 1")
     suspend fun getCoupleRelationship(userA: Int, userB: Int): Couple?
+
+    @Query("""
+        DELETE FROM couples 
+        WHERE (requesterId = :userA AND partnerId = :userB) 
+           OR (requesterId = :userB AND partnerId = :userA)
+    """)
+    suspend fun deleteRelationshipBetween(userA: Int, userB: Int)
 }

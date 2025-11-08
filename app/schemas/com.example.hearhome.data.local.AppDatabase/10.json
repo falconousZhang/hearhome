@@ -1,8 +1,8 @@
 {
   "formatVersion": 1,
   "database": {
-    "version": 8,
-    "identityHash": "2566d66526de588d795065628093cb7b",
+    "version": 10,
+    "identityHash": "6e3ec460aae71a64db004845c74deb51",
     "entities": [
       {
         "tableName": "users",
@@ -478,7 +478,7 @@
       },
       {
         "tableName": "post_comments",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `postId` INTEGER NOT NULL, `authorId` INTEGER NOT NULL, `content` TEXT NOT NULL, `replyToUserId` INTEGER, `timestamp` INTEGER NOT NULL, `status` TEXT NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `postId` INTEGER NOT NULL, `authorId` INTEGER NOT NULL, `content` TEXT NOT NULL, `audioPath` TEXT, `audioDuration` INTEGER, `replyToUserId` INTEGER, `timestamp` INTEGER NOT NULL, `status` TEXT NOT NULL)",
         "fields": [
           {
             "fieldPath": "id",
@@ -503,6 +503,18 @@
             "columnName": "content",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "audioPath",
+            "columnName": "audioPath",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "audioDuration",
+            "columnName": "audioDuration",
+            "affinity": "INTEGER",
+            "notNull": false
           },
           {
             "fieldPath": "replyToUserId",
@@ -531,12 +543,56 @@
         },
         "indices": [],
         "foreignKeys": []
+      },
+      {
+        "tableName": "post_favorites",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `userId` INTEGER NOT NULL, `postId` INTEGER NOT NULL, `timestamp` INTEGER NOT NULL, `note` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "postId",
+            "columnName": "postId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
       }
     ],
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '2566d66526de588d795065628093cb7b')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6e3ec460aae71a64db004845c74deb51')"
     ]
   }
 }

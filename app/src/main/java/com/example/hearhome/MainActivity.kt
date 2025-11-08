@@ -28,13 +28,24 @@ import com.example.hearhome.ui.profile.ProfileScreen
 import com.example.hearhome.ui.relation.CoupleRequestsScreen
 import com.example.hearhome.ui.relation.RelationListScreen
 import com.example.hearhome.ui.search.SearchUserScreen
+import com.example.hearhome.ui.space.SpaceListScreen
+import com.example.hearhome.ui.space.SpaceDetailScreen
+import com.example.hearhome.ui.space.PostDetailScreen
+import com.example.hearhome.ui.space.FavoritesScreen
+import com.example.hearhome.ui.space.SpaceManageScreen
+import com.example.hearhome.ui.space.SpaceInfoScreen
 import com.example.hearhome.ui.theme.HearHomeTheme
+import com.example.hearhome.utils.NotificationHelper
 
 class MainActivity : ComponentActivity() {
     @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // 初始化通知渠道
+        NotificationHelper.createNotificationChannels(this)
+        
         setContent {
             HearHomeTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) {
@@ -137,6 +148,76 @@ fun AuthNavigation() {
             val currentUserId = it.arguments?.getInt("currentUserId") ?: return@composable
             val friendUserId = it.arguments?.getInt("friendUserId") ?: return@composable
             ChatScreen(navController, currentUserId, friendUserId)
+        }
+        
+        // ==================== 空间相关路由 ====================
+        
+        composable(
+            route = "space_list/{userId}",
+            arguments = listOf(navArgument("userId") { type = NavType.IntType })
+        ) {
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            SpaceListScreen(navController, userId)
+        }
+        
+        composable(
+            route = "space_detail/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            SpaceDetailScreen(navController, spaceId, userId)
+        }
+        
+        composable(
+            route = "post_detail/{postId}/{userId}",
+            arguments = listOf(
+                navArgument("postId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
+        ) {
+            val postId = it.arguments?.getInt("postId") ?: return@composable
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            PostDetailScreen(navController, postId, userId)
+        }
+        
+        composable(
+            route = "favorites/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            FavoritesScreen(navController, spaceId, userId)
+        }
+        
+        composable(
+            route = "space_manage/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            SpaceManageScreen(navController, spaceId, userId)
+        }
+        
+        composable(
+            route = "space_info/{spaceId}/{userId}",
+            arguments = listOf(
+                navArgument("spaceId") { type = NavType.IntType },
+                navArgument("userId") { type = NavType.IntType }
+            )
+        ) {
+            val spaceId = it.arguments?.getInt("spaceId") ?: return@composable
+            val userId = it.arguments?.getInt("userId") ?: return@composable
+            SpaceInfoScreen(navController, spaceId, userId)
         }
 
     }

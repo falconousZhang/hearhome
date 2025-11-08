@@ -15,7 +15,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.model.PendingAttachment
+import com.example.hearhome.ui.components.EmojiTextField
+import com.example.hearhome.ui.components.attachments.AttachmentSelector
+import com.example.hearhome.utils.AttachmentFileHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -27,11 +33,17 @@ fun ChatScreen(
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
     val viewModel: ChatViewModel = viewModel(
-        factory = ChatViewModelFactory(db.messageDao(), currentUserId, friendUserId)
+        factory = ChatViewModelFactory(
+            db.messageDao(),
+            db.mediaAttachmentDao(),
+            currentUserId,
+            friendUserId
+        )
     )
 
     val messages by viewModel.messages.collectAsState()
     var messageText by remember { mutableStateOf("") }
+    var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
     var friendNickname by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
@@ -63,28 +75,58 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = messageText,
-                    onValueChange = { messageText = it },
-                    label = { Text("输入消息...") },
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        if (messageText.isNotBlank()) {
-                            viewModel.sendMessage(messageText)
-                            messageText = ""
+            Surface(shadowElevation = 6.dp) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    EmojiTextField(
+                        value = messageText,
+                        onValueChange = { messageText = it },
+                        label = "消息",
+                        placeholder = "输入消息...",
+                        maxLines = 4,
+                        minHeight = 70
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    AttachmentSelector(
+                        attachments = attachments,
+                        onAttachmentsChange = { attachments = it },
+                        enableTestTools = true
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = {
+                                if (messageText.isNotBlank() || attachments.isNotEmpty()) {
+                                    coroutineScope.launch {
+                                        val resolved = withContext(Dispatchers.IO) {
+                                            AttachmentFileHelper.resolvePendingAttachments(
+                                                context = context,
+                                                attachments = attachments
+                                            )
+                                        }
+                                        val trimmed = messageText.trim()
+                                        viewModel.sendMessage(trimmed, resolved)
+                                        messageText = ""
+                                        attachments = emptyList()
+                                    }
+                                }
+                            },
+                            enabled = messageText.isNotBlank() || attachments.isNotEmpty()
+                        ) {
+                            Text("发送")
                         }
                     }
-                ) {
-                    Text("发送")
                 }
             }
         }

@@ -44,10 +44,14 @@ import androidx.core.graphics.toColorInt
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.data.local.Couple
+import com.example.hearhome.data.local.Space
+import com.example.hearhome.data.local.SpaceDao
+import com.example.hearhome.data.local.SpaceMember
 import com.example.hearhome.data.local.User
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.random.Random
 
 data class CoupleRequestInfo(val request: Couple, val requester: User)
 
@@ -61,6 +65,7 @@ fun CoupleRequestsScreen(
     val db = remember { AppDatabase.getInstance(context) }
     val coupleDao = db.coupleDao()
     val userDao = db.userDao()
+    val spaceDao = db.spaceDao()
 
     var requests by remember { mutableStateOf<List<CoupleRequestInfo>>(emptyList()) }
     val scope = rememberCoroutineScope()
@@ -132,6 +137,76 @@ fun CoupleRequestsScreen(
                                                 val requesterId = info.requester.uid
                                                 userDao.updateRelationshipStatus(currentUserId, "in_relationship", requesterId)
                                                 userDao.updateRelationshipStatus(requesterId, "in_relationship", currentUserId)
+
+                                                // 自动创建或恢复情侣空间
+                                                val existingSpace = spaceDao.findActiveCoupleSpace(currentUserId, requesterId)
+                                                val currentUser = userDao.getUserById(currentUserId)
+                                                val partnerUser = userDao.getUserById(requesterId)
+
+                                                if (existingSpace == null) {
+                                                    val inviteCode = generateUniqueCoupleInviteCode(spaceDao)
+                                                    val spaceName = buildCoupleSpaceName(currentUser, partnerUser)
+                                                    val spaceId = spaceDao.createSpace(
+                                                        Space(
+                                                            name = spaceName,
+                                                            type = "couple",
+                                                            description = "情侣专属空间",
+                                                            creatorId = currentUserId,
+                                                            inviteCode = inviteCode
+                                                        )
+                                                    ).toInt()
+
+                                                    spaceDao.addSpaceMember(
+                                                        SpaceMember(
+                                                            spaceId = spaceId,
+                                                            userId = currentUserId,
+                                                            role = "owner",
+                                                            status = "active"
+                                                        )
+                                                    )
+                                                    spaceDao.addSpaceMember(
+                                                        SpaceMember(
+                                                            spaceId = spaceId,
+                                                            userId = requesterId,
+                                                            role = "owner",
+                                                            status = "active"
+                                                        )
+                                                    )
+                                                } else {
+                                                    val meMember = spaceDao.getSpaceMember(existingSpace.id, currentUserId)
+                                                    if (meMember == null) {
+                                                        spaceDao.addSpaceMember(
+                                                            SpaceMember(
+                                                                spaceId = existingSpace.id,
+                                                                userId = currentUserId,
+                                                                role = "owner",
+                                                                status = "active"
+                                                            )
+                                                        )
+                                                    } else if (meMember.status != "active") {
+                                                        spaceDao.updateMemberStatus(meMember.id, "active")
+                                                        spaceDao.updateMemberRole(existingSpace.id, currentUserId, "owner")
+                                                    } else {
+                                                        spaceDao.updateMemberRole(existingSpace.id, currentUserId, "owner")
+                                                    }
+
+                                                    val partnerMember = spaceDao.getSpaceMember(existingSpace.id, requesterId)
+                                                    if (partnerMember == null) {
+                                                        spaceDao.addSpaceMember(
+                                                            SpaceMember(
+                                                                spaceId = existingSpace.id,
+                                                                userId = requesterId,
+                                                                role = "owner",
+                                                                status = "active"
+                                                            )
+                                                        )
+                                                    } else if (partnerMember.status != "active") {
+                                                        spaceDao.updateMemberStatus(partnerMember.id, "active")
+                                                        spaceDao.updateMemberRole(existingSpace.id, requesterId, "owner")
+                                                    } else {
+                                                        spaceDao.updateMemberRole(existingSpace.id, requesterId, "owner")
+                                                    }
+                                                }
                                             }
                                             Toast.makeText(context, "已接受情侣申请", Toast.LENGTH_SHORT).show()
                                             refreshRequests()
@@ -153,4 +228,18 @@ fun CoupleRequestsScreen(
             }
         }
     }
+}
+
+private suspend fun generateUniqueCoupleInviteCode(spaceDao: SpaceDao): String {
+    var code: String
+    do {
+        code = Random.nextInt(100000, 999999).toString()
+    } while (spaceDao.isInviteCodeExists(code) > 0)
+    return code
+}
+
+private fun buildCoupleSpaceName(userA: User?, userB: User?): String {
+    val nameA = userA?.nickname?.takeIf { it.isNotBlank() } ?: "恋人A"
+    val nameB = userB?.nickname?.takeIf { it.isNotBlank() } ?: "恋人B"
+    return "$nameA & $nameB 的情侣空间"
 }
