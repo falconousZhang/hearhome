@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 /**
  * 空间信息界面
  * 显示空间的详细信息和成员列表
+ * 支持点击成员开启私聊功能
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -141,7 +142,15 @@ fun SpaceInfoScreen(
                 items(members) { member ->
                     val user = users[member.userId]
                     if (user != null) {
-                        MemberCard(member, user)
+                        MemberCard(
+                            member = member,
+                            user = user,
+                            currentUserId = currentUserId,
+                            onChatClick = { memberId ->
+                                // 导航到聊天界面
+                                navController.navigate("chat/$currentUserId/$memberId")
+                            }
+                        )
                     }
                 }
             }
@@ -169,7 +178,12 @@ private fun InfoRow(label: String, value: String) {
 }
 
 @Composable
-private fun MemberCard(member: SpaceMember, user: User) {
+private fun MemberCard(
+    member: SpaceMember,
+    user: User,
+    currentUserId: Int,
+    onChatClick: (Int) -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -180,7 +194,9 @@ private fun MemberCard(member: SpaceMember, user: User) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
                 Text(
                     text = user.nickname.ifEmpty { user.email },
                     style = MaterialTheme.typography.bodyLarge,
@@ -197,17 +213,39 @@ private fun MemberCard(member: SpaceMember, user: User) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
-            if (member.status != "active") {
-                Badge {
-                    Text(
-                        when (member.status) {
-                            "pending" -> "待审核"
-                            "rejected" -> "已拒绝"
-                            "left" -> "已退出"
-                            else -> member.status
-                        }
-                    )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (member.status != "active") {
+                    Badge {
+                        Text(
+                            when (member.status) {
+                                "pending" -> "待审核"
+                                "rejected" -> "已拒绝"
+                                "left" -> "已退出"
+                                else -> member.status
+                            }
+                        )
+                    }
+                }
+
+                // 只有不是自己且成员是活跃的，才显示聊天按钮
+                if (user.uid != currentUserId && member.status == "active") {
+                    Button(
+                        onClick = { onChatClick(user.uid) },
+                        modifier = Modifier
+                            .height(32.dp)
+                            .padding(0.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Text(
+                            "私聊",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
             }
         }
