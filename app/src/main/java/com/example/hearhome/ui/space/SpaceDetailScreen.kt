@@ -78,7 +78,6 @@ fun SpaceDetailScreen(
     val currentUserRole by spaceViewModel.currentUserRole.collectAsState()
     val spaceMembers by spaceViewModel.spaceMembers.collectAsState()
     val scope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
     
     // 判断是否有管理权限（管理员或所有者）
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
@@ -87,7 +86,6 @@ fun SpaceDetailScreen(
     var showPostDialog by remember { mutableStateOf(false) }
     var showMembersDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
-    var showDissolveDialog by remember { mutableStateOf(false) }
     
     // 加载空间信息和用户角色
     LaunchedEffect(spaceId) {
@@ -95,7 +93,6 @@ fun SpaceDetailScreen(
     }
     
     Scaffold(
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(currentSpace?.name ?: "空间") },
@@ -144,15 +141,6 @@ fun SpaceDetailScreen(
                                     onClick = {
                                         showMoreMenu = false
                                         navController.navigate("space_manage/$spaceId/$currentUserId")
-                                    }
-                                )
-                            }
-                            if (currentUserRole == "owner") {
-                                DropdownMenuItem(
-                                    text = { Text("解散空间") },
-                                    onClick = {
-                                        showMoreMenu = false
-                                        showDissolveDialog = true
                                     }
                                 )
                             }
@@ -255,46 +243,6 @@ fun SpaceDetailScreen(
         SpaceMembersDialog(
             members = spaceMembers,
             onDismiss = { showMembersDialog = false }
-        )
-    }
-
-    if (showDissolveDialog) {
-        val isCoupleSpace = currentSpace?.type == "couple"
-        AlertDialog(
-            onDismissRequest = { showDissolveDialog = false },
-            title = { Text("确认解散空间") },
-            text = {
-                Text(
-                    if (isCoupleSpace) "解散情侣空间将同时解除情侣关系，确认继续吗？"
-                    else "空间解散后成员将无法访问历史内容，确认继续吗？"
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        scope.launch {
-                            val result = spaceViewModel.dissolveSpace(spaceId)
-                            showDissolveDialog = false
-                            when (result) {
-                                is DissolveSpaceResult.Success -> {
-                                    snackbarHostState.showSnackbar(result.message)
-                                    navController.navigateUp()
-                                }
-                                is DissolveSpaceResult.Failure -> {
-                                    snackbarHostState.showSnackbar(result.message)
-                                }
-                            }
-                        }
-                    }
-                ) {
-                    Text("确认")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDissolveDialog = false }) {
-                    Text("取消")
-                }
-            }
         )
     }
 }

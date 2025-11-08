@@ -201,6 +201,15 @@ interface SpaceDao {
     suspend fun upgradeToAdmin(spaceId: Int, userId: Int)
     
     /**
+     * 更新成员角色
+     */
+    @Query("""
+        UPDATE space_members SET role = :role
+        WHERE spaceId = :spaceId AND userId = :userId
+    """)
+    suspend fun updateMemberRole(spaceId: Int, userId: Int, role: String)
+    
+    /**
      * 统计空间成员数
      */
     @Query("SELECT COUNT(*) FROM space_members WHERE spaceId = :spaceId AND status = 'active'")

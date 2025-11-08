@@ -57,9 +57,10 @@ fun SpaceManageScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showDissolveDialog by remember { mutableStateOf(false) }
     
-    // 判断是否有管理权限
+    // 情侣空间双方都是owner，都可以管理和解散
+    val isCoupleSpace = currentSpace?.type == "couple"
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
-    val isOwner = currentUserRole == "owner"
+    val canDissolve = currentUserRole == "owner"  // 情侣空间和其他空间的owner都可以解散
     
     LaunchedEffect(spaceId) {
         viewModel.selectSpace(spaceId)
@@ -140,6 +141,9 @@ fun SpaceManageScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // 情侣空间不显示移除成员功能
+            val canRemoveMembers = !isCoupleSpace
+
             // 空间信息
             item {
                 currentSpace?.let { space ->
@@ -202,6 +206,7 @@ fun SpaceManageScreen(
                 MemberCard(
                     memberInfo = memberInfo,
                     currentUserId = currentUserId,
+                    canRemove = canRemoveMembers,
                     onRemove = {
                         scope.launch {
                             viewModel.removeMember(memberInfo.member.id)
@@ -210,7 +215,8 @@ fun SpaceManageScreen(
                 )
             }
 
-            if (isOwner) {
+            // 危险操作区域 - 只有owner可以解散
+            if (canDissolve) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -231,7 +237,7 @@ fun SpaceManageScreen(
                                 color = MaterialTheme.colorScheme.error
                             )
                             Text(
-                                text = if (currentSpace?.type == "couple") {
+                                text = if (isCoupleSpace) {
                                     "解散情侣空间将同时解除情侣关系。该操作无法撤销。"
                                 } else {
                                     "解散空间后，成员将无法访问空间内容。该操作无法撤销。"
@@ -254,8 +260,8 @@ fun SpaceManageScreen(
         }
     }
 
+    // 解散空间确认对话框
     if (showDissolveDialog) {
-        val isCoupleSpace = currentSpace?.type == "couple"
         AlertDialog(
             onDismissRequest = { showDissolveDialog = false },
             title = { Text("确认解散空间") },
@@ -268,13 +274,15 @@ fun SpaceManageScreen(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        showDissolveDialog = false
                         scope.launch {
                             val result = viewModel.dissolveSpace(spaceId)
-                            showDissolveDialog = false
                             when (result) {
                                 is DissolveSpaceResult.Success -> {
                                     snackbarHostState.showSnackbar(result.message)
-                                    navController.popBackStack()
+                                    // 延迟一下再返回，确保Snackbar能显示
+                                    kotlinx.coroutines.delay(500)
+                                    navController.popBackStack("home", false)
                                 }
                                 is DissolveSpaceResult.Failure -> {
                                     snackbarHostState.showSnackbar(result.message)
@@ -283,7 +291,7 @@ fun SpaceManageScreen(
                         }
                     }
                 ) {
-                    Text("确认")
+                    Text("确认", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -371,12 +379,14 @@ fun MemberRequestCard(
 fun MemberCard(
     memberInfo: SpaceMemberInfo,
     currentUserId: Int,
+    canRemove: Boolean,
     onRemove: () -> Unit
 ) {
     val isCurrentUser = memberInfo.user.uid == currentUserId
-    val isAdminOrOwner = memberInfo.member.role == "admin" || memberInfo.member.role == "owner"
+    val isOwner = memberInfo.member.role == "owner"
+    val isAdminOrOwner = memberInfo.member.role == "admin" || isOwner
     val roleText = when (memberInfo.member.role) {
-        "owner" -> "所有者"
+        "owner" -> if (canRemove) "所有者" else "共同所有者"  // 情侣空间显示"共同所有者"
         "admin" -> "管理员"
         else -> "成员"
     }
@@ -425,7 +435,7 @@ fun MemberCard(
             }
             
             // 只有非管理员、非所有者且非当前用户才显示移除按钮
-            if (!isAdminOrOwner && !isCurrentUser) {
+            if (canRemove && !isAdminOrOwner && !isCurrentUser) {
                 TextButton(onClick = onRemove) {
                     Text("移除", color = MaterialTheme.colorScheme.error)
                 }

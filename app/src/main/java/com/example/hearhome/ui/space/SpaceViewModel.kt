@@ -188,14 +188,14 @@ class SpaceViewModel(
                                     status = "active"
                                 )
                             )
-                            spaceDao.addSpaceMember(
-                                SpaceMember(
-                                    spaceId = spaceId,
-                                    userId = partnerId,
-                                    role = "member",
-                                    status = "active"
-                                )
-                            )
+                    spaceDao.addSpaceMember(
+                        SpaceMember(
+                            spaceId = spaceId,
+                            userId = partnerId,
+                            role = "owner",
+                            status = "active"
+                        )
+                    )
 
                             if (currentUser.relationshipStatus != "in_relationship" || currentUser.partnerId != partnerId) {
                                 userDao.updateRelationshipStatus(currentUserId, "in_relationship", partnerId)
@@ -302,15 +302,17 @@ suspend fun joinSpaceByCode(inviteCode: String): JoinSpaceResult {
                     if (partnerMember == null || partnerMember.status != "active") {
                         return JoinSpaceResult.Failure("您的伴侣尚未加入该情侣空间，无法加入")
                     }
+                    spaceDao.updateMemberRole(space.id, partnerId, "owner")
 
                     if (existingMember != null) {
                         spaceDao.updateMemberStatus(existingMember.id, "active")
+                        spaceDao.updateMemberRole(space.id, currentUserId, "owner")
                     } else {
                         spaceDao.addSpaceMember(
                             SpaceMember(
                                 spaceId = space.id,
                                 userId = currentUserId,
-                                role = "member",
+                                role = "owner",
                                 status = "active"
                             )
                         )
@@ -358,15 +360,22 @@ suspend fun joinSpaceByCode(inviteCode: String): JoinSpaceResult {
     }
 
     /**
-     * 解散空间（仅所有者）
+     * 解散空间
+     * 情侣空间：双方都是所有者，都可以解散
+     * 其他空间：仅所有者可以解散
      */
     suspend fun dissolveSpace(spaceId: Int): DissolveSpaceResult {
         return try {
             val space = spaceDao.getSpaceById(spaceId) ?: return DissolveSpaceResult.Failure("空间不存在")
             val myMember = spaceDao.getSpaceMember(spaceId, currentUserId)
                 ?: return DissolveSpaceResult.Failure("您不在该空间中")
-            if (myMember.role != "owner") {
+            
+            if (space.type != "couple" && myMember.role != "owner") {
                 return DissolveSpaceResult.Failure("只有空间所有者可以解散空间")
+            }
+            
+            if (space.type == "couple" && myMember.role != "owner") {
+                return DissolveSpaceResult.Failure("您没有权限解散情侣空间")
             }
 
             val members = spaceDao.getSpaceMembers(spaceId)

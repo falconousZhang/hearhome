@@ -168,7 +168,7 @@ fun CoupleRequestsScreen(
                                                         SpaceMember(
                                                             spaceId = spaceId,
                                                             userId = requesterId,
-                                                            role = "member",
+                                                            role = "owner",
                                                             status = "active"
                                                         )
                                                     )
@@ -179,12 +179,15 @@ fun CoupleRequestsScreen(
                                                             SpaceMember(
                                                                 spaceId = existingSpace.id,
                                                                 userId = currentUserId,
-                                                                role = "member",
+                                                                role = "owner",
                                                                 status = "active"
                                                             )
                                                         )
                                                     } else if (meMember.status != "active") {
                                                         spaceDao.updateMemberStatus(meMember.id, "active")
+                                                        spaceDao.updateMemberRole(existingSpace.id, currentUserId, "owner")
+                                                    } else {
+                                                        spaceDao.updateMemberRole(existingSpace.id, currentUserId, "owner")
                                                     }
 
                                                     val partnerMember = spaceDao.getSpaceMember(existingSpace.id, requesterId)
@@ -193,12 +196,15 @@ fun CoupleRequestsScreen(
                                                             SpaceMember(
                                                                 spaceId = existingSpace.id,
                                                                 userId = requesterId,
-                                                                role = "member",
+                                                                role = "owner",
                                                                 status = "active"
                                                             )
                                                         )
                                                     } else if (partnerMember.status != "active") {
                                                         spaceDao.updateMemberStatus(partnerMember.id, "active")
+                                                        spaceDao.updateMemberRole(existingSpace.id, requesterId, "owner")
+                                                    } else {
+                                                        spaceDao.updateMemberRole(existingSpace.id, requesterId, "owner")
                                                     }
                                                 }
                                             }
