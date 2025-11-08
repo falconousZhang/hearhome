@@ -33,6 +33,22 @@ interface SpaceDao {
      */
     @Query("SELECT * FROM spaces WHERE inviteCode = :inviteCode AND status = 'active' LIMIT 1")
     suspend fun getSpaceByInviteCode(inviteCode: String): Space?
+
+    /**
+     * 查询两位用户间已存在的活跃情侣空间
+     */
+    @Transaction
+    @Query("""
+        SELECT s.* FROM spaces s
+        INNER JOIN space_members sm1 ON s.id = sm1.spaceId
+        INNER JOIN space_members sm2 ON s.id = sm2.spaceId
+        WHERE s.type = 'couple'
+          AND s.status = 'active'
+          AND sm1.userId = :userId1 AND sm1.status = 'active'
+          AND sm2.userId = :userId2 AND sm2.status = 'active'
+        LIMIT 1
+    """)
+    suspend fun findActiveCoupleSpace(userId1: Int, userId2: Int): Space?
     
     /**
      * 查询用户创建的所有空间
@@ -87,6 +103,12 @@ interface SpaceDao {
         ORDER BY joinedAt ASC
     """)
     suspend fun getSpaceMembers(spaceId: Int): List<SpaceMember>
+
+    /**
+     * 根据成员ID查询成员信息
+     */
+    @Query("SELECT * FROM space_members WHERE id = :memberId LIMIT 1")
+    suspend fun getMemberById(memberId: Int): SpaceMember?
     
     /**
      * 查询待审核的加入申请
@@ -125,6 +147,12 @@ interface SpaceDao {
      */
     @Query("UPDATE space_members SET status = 'left' WHERE id = :memberId")
     suspend fun removeMember(memberId: Int)
+
+    /**
+     * 更新成员状态
+     */
+    @Query("UPDATE space_members SET status = :status WHERE id = :memberId")
+    suspend fun updateMemberStatus(memberId: Int, status: String)
     
     /**
      * 用户主动退出空间

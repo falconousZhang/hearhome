@@ -175,18 +175,48 @@ class SpaceViewModel(
             if (existingMember != null && existingMember.status == "active") {
                 return space // 已经是成员
             }
+
+            val currentUser = userDao.getUserById(currentUserId) ?: return null
             
             // 根据空间类型决定是否需要审核
-            val status = when (space.type) {
-                "couple" -> "pending" // 情侣空间需要审核
-                "family" -> "pending" // 家族空间也需要审核
-                else -> "active"
+            if (space.type == "couple") {
+                // 情侣空间最多两人，且只能情侣关系加入
+                val activeCount = spaceDao.getSpaceMemberCount(space.id)
+                if (activeCount >= 2) {
+                    return null
+                }
+                val partnerId = currentUser.partnerId
+                if (currentUser.relationshipStatus != "in_relationship" || partnerId == null) {
+                    return null
+                }
+                val partnerMember = spaceDao.getSpaceMember(space.id, partnerId)
+                if (partnerMember == null || partnerMember.status != "active") {
+                    return null
+                }
+
+                if (existingMember != null) {
+                    spaceDao.updateMemberStatus(existingMember.id, "active")
+                } else {
+                    spaceDao.addSpaceMember(
+                        SpaceMember(
+                            spaceId = space.id,
+                            userId = currentUserId,
+                            role = "member",
+                            status = "active"
+                        )
+                    )
+                }
+                loadMySpaces()
+                return space
             }
             
             val member = SpaceMember(
                 spaceId = space.id,
                 userId = currentUserId,
-                status = status
+                status = when (space.type) {
+                    "family" -> "pending"
+                    else -> "active"
+                }
             )
             spaceDao.addSpaceMember(member)
             
@@ -203,11 +233,29 @@ class SpaceViewModel(
      */
     suspend fun approveMember(memberId: Int): Boolean {
         return try {
-            spaceDao.approveMember(memberId)
-            _currentSpace.value?.let { space ->
-                loadSpaceMembers(space.id)
-                loadPendingMembers(space.id)
+            val member = spaceDao.getMemberById(memberId) ?: return false
+            val spaceId = member.spaceId
+            val space = spaceDao.getSpaceById(spaceId) ?: return false
+
+            if (space.type == "couple") {
+                val activeCount = spaceDao.getSpaceMemberCount(spaceId)
+                if (activeCount >= 2) {
+                    return false
+                }
+                val user = userDao.getUserById(member.userId) ?: return false
+                val partnerId = user.partnerId
+                if (user.relationshipStatus != "in_relationship" || partnerId == null) {
+                    return false
+                }
+                val partnerMember = spaceDao.getSpaceMember(spaceId, partnerId)
+                if (partnerMember == null || partnerMember.status != "active") {
+                    return false
+                }
             }
+
+            spaceDao.approveMember(memberId)
+            loadSpaceMembers(spaceId)
+            loadPendingMembers(spaceId)
             true
         } catch (e: Exception) {
             e.printStackTrace()

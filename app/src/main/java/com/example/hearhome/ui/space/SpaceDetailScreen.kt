@@ -76,6 +76,7 @@ fun SpaceDetailScreen(
     val currentSpace by spaceViewModel.currentSpace.collectAsState()
     val posts by postViewModel.posts.collectAsState()
     val currentUserRole by spaceViewModel.currentUserRole.collectAsState()
+    val spaceMembers by spaceViewModel.spaceMembers.collectAsState()
     val scope = rememberCoroutineScope()
     
     // 判断是否有管理权限（管理员或所有者）
@@ -237,6 +238,71 @@ fun SpaceDetailScreen(
             }
         )
     }
+
+    if (showMembersDialog) {
+        SpaceMembersDialog(
+            members = spaceMembers,
+            onDismiss = { showMembersDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun SpaceMembersDialog(
+    members: List<SpaceMemberInfo>,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+        title = { Text("空间成员") },
+        text = {
+            if (members.isEmpty()) {
+                Text("暂无成员")
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    members.forEach { memberInfo ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(memberInfo.user.avatarColor.toColorInt()))
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(memberInfo.user.nickname.ifBlank { "未设置昵称" })
+                                    Text(
+                                        "ID: ${memberInfo.user.uid}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+                            Text(
+                                when (memberInfo.member.role) {
+                                    "owner" -> "所有者"
+                                    "admin" -> "管理员"
+                                    else -> "成员"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    )
 }
 
 @Composable
