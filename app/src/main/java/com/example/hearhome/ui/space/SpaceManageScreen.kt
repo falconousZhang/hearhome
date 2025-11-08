@@ -54,9 +54,12 @@ fun SpaceManageScreen(
     val pendingMembers by viewModel.pendingMembers.collectAsState()
     val currentUserRole by viewModel.currentUserRole.collectAsState()
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    var showDissolveDialog by remember { mutableStateOf(false) }
     
     // 判断是否有管理权限
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
+    val isOwner = currentUserRole == "owner"
     
     LaunchedEffect(spaceId) {
         viewModel.selectSpace(spaceId)
@@ -118,6 +121,7 @@ fun SpaceManageScreen(
     }
     
     Scaffold(
+        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("空间管理") },
@@ -205,7 +209,89 @@ fun SpaceManageScreen(
                     }
                 )
             }
+
+            if (isOwner) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = "危险操作",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = if (currentSpace?.type == "couple") {
+                                    "解散情侣空间将同时解除情侣关系。该操作无法撤销。"
+                                } else {
+                                    "解散空间后，成员将无法访问空间内容。该操作无法撤销。"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Button(
+                                onClick = { showDissolveDialog = true },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("解散空间", color = MaterialTheme.colorScheme.onError)
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    if (showDissolveDialog) {
+        val isCoupleSpace = currentSpace?.type == "couple"
+        AlertDialog(
+            onDismissRequest = { showDissolveDialog = false },
+            title = { Text("确认解散空间") },
+            text = {
+                Text(
+                    if (isCoupleSpace) "解散情侣空间将同时解除情侣关系，确认继续吗？"
+                    else "空间解散后成员将无法访问历史内容，确认继续吗？"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val result = viewModel.dissolveSpace(spaceId)
+                            showDissolveDialog = false
+                            when (result) {
+                                is DissolveSpaceResult.Success -> {
+                                    snackbarHostState.showSnackbar(result.message)
+                                    navController.popBackStack()
+                                }
+                                is DissolveSpaceResult.Failure -> {
+                                    snackbarHostState.showSnackbar(result.message)
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("确认")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDissolveDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 

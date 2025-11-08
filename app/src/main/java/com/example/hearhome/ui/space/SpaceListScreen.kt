@@ -70,30 +70,33 @@ fun SpaceListScreen(
     LaunchedEffect(showCreateDialog) {
         if (showCreateDialog) {
             coupleCandidatesLoading = true
-            val user = withContext(Dispatchers.IO) { userDao.getUserById(currentUserId) }
-            val friends = withContext(Dispatchers.IO) { friendDao.getAcceptedFriendsWithUsers(currentUserId) }
-            val candidates = friends.mapNotNull { info ->
-                when (info.friend.senderId) {
-                    currentUserId -> info.receiver
-                    else -> if (info.friend.receiverId == currentUserId) info.sender else null
+            try {
+                val user = withContext(Dispatchers.IO) { userDao.getUserById(currentUserId) }
+                val friends = withContext(Dispatchers.IO) { friendDao.getAcceptedFriendsWithUsers(currentUserId) }
+                val candidates = friends.mapNotNull { info ->
+                    when (info.friend.senderId) {
+                        currentUserId -> info.receiver
+                        else -> if (info.friend.receiverId == currentUserId) info.sender else null
+                    }
                 }
-            }
-                .filter { it.uid != currentUserId }
-                .filter { it.relationshipStatus != "in_relationship" || it.partnerId == currentUserId }
-            val uniqueCandidates = candidates.associateBy { it.uid }.values.toList()
+                    .filter { it.uid != currentUserId }
+                    .filter { it.relationshipStatus != "in_relationship" || it.partnerId == currentUserId }
+                val uniqueCandidates = candidates.associateBy { it.uid }.values.toList()
 
-            val partner = if (user?.partnerId != null && user.partnerId != currentUserId) {
-                uniqueCandidates.firstOrNull { it.uid == user.partnerId } ?: withContext(Dispatchers.IO) {
-                    userDao.getUserById(user.partnerId)
+                val partner = if (user?.partnerId != null && user.partnerId != currentUserId) {
+                    uniqueCandidates.firstOrNull { it.uid == user.partnerId } ?: withContext(Dispatchers.IO) {
+                        userDao.getUserById(user.partnerId)
+                    }
+                } else {
+                    null
                 }
-            } else {
-                null
-            }
 
-            currentUser = user
-            coupleCandidates = uniqueCandidates
-            partnerUser = partner
-            coupleCandidatesLoading = false
+                currentUser = user
+                coupleCandidates = uniqueCandidates
+                partnerUser = partner
+            } finally {
+                coupleCandidatesLoading = false
+            }
         }
     }
 

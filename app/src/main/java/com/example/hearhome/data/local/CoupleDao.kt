@@ -45,8 +45,8 @@ interface CoupleDao {
 
     @Query("""
         DELETE FROM couples 
-        WHERE ((requesterId = :userA AND partnerId = :userB) OR (requesterId = :userB AND partnerId = :userA))
-          AND status = 'accepted'
+        WHERE (requesterId = :userA AND partnerId = :userB) 
+           OR (requesterId = :userB AND partnerId = :userA)
     """)
     suspend fun deleteRelationshipBetween(userA: Int, userB: Int)
 }

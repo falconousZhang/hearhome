@@ -379,7 +379,7 @@ suspend fun joinSpaceByCode(inviteCode: String): JoinSpaceResult {
                 if (memberIds.size >= 2) {
                     val userA = memberIds[0]
                     val userB = memberIds[1]
-
+    
                     coupleDao.deleteRelationshipBetween(userA, userB)
 
                     val userAInfo = userDao.getUserById(userA)
@@ -392,10 +392,22 @@ suspend fun joinSpaceByCode(inviteCode: String): JoinSpaceResult {
                     }
                 } else if (memberIds.isNotEmpty()) {
                     val userId = memberIds.first()
-                    coupleDao.deleteRelationship(userId)
                     val userInfo = userDao.getUserById(userId)
-                    if (userInfo?.relationshipStatus == "in_relationship") {
-                        userDao.updateRelationshipStatus(userId, "single", null)
+                    val partnerId = userInfo?.partnerId
+                    if (partnerId != null) {
+                        coupleDao.deleteRelationshipBetween(userId, partnerId)
+                        if (userInfo.relationshipStatus == "in_relationship") {
+                            userDao.updateRelationshipStatus(userId, "single", null)
+                        }
+                        val partnerInfo = userDao.getUserById(partnerId)
+                        if (partnerInfo?.partnerId == userId) {
+                            userDao.updateRelationshipStatus(partnerId, "single", null)
+                        }
+                    } else {
+                        coupleDao.deleteRelationship(userId)
+                        if (userInfo?.relationshipStatus == "in_relationship") {
+                            userDao.updateRelationshipStatus(userId, "single", null)
+                        }
                     }
                 }
             }

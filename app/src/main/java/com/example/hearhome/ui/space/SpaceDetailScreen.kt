@@ -31,6 +31,7 @@ import com.example.hearhome.utils.AttachmentFileHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -146,6 +147,15 @@ fun SpaceDetailScreen(
                                     }
                                 )
                             }
+                            if (currentUserRole == "owner") {
+                                DropdownMenuItem(
+                                    text = { Text("解散空间") },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        showDissolveDialog = true
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -234,7 +244,7 @@ fun SpaceDetailScreen(
                     val success = postViewModel.createPost(content, resolvedAttachments)
                     if (success) {
                         showPostDialog = false
-                        postViewModel.loadPosts() // Manually refresh posts
+                        // 响应式Flow会自动更新，无需手动刷新
                     }
                 }
             }
@@ -245,6 +255,46 @@ fun SpaceDetailScreen(
         SpaceMembersDialog(
             members = spaceMembers,
             onDismiss = { showMembersDialog = false }
+        )
+    }
+
+    if (showDissolveDialog) {
+        val isCoupleSpace = currentSpace?.type == "couple"
+        AlertDialog(
+            onDismissRequest = { showDissolveDialog = false },
+            title = { Text("确认解散空间") },
+            text = {
+                Text(
+                    if (isCoupleSpace) "解散情侣空间将同时解除情侣关系，确认继续吗？"
+                    else "空间解散后成员将无法访问历史内容，确认继续吗？"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            val result = spaceViewModel.dissolveSpace(spaceId)
+                            showDissolveDialog = false
+                            when (result) {
+                                is DissolveSpaceResult.Success -> {
+                                    snackbarHostState.showSnackbar(result.message)
+                                    navController.navigateUp()
+                                }
+                                is DissolveSpaceResult.Failure -> {
+                                    snackbarHostState.showSnackbar(result.message)
+                                }
+                            }
+                        }
+                    }
+                ) {
+                    Text("确认")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDissolveDialog = false }) {
+                    Text("取消")
+                }
+            }
         )
     }
 }
@@ -426,11 +476,9 @@ fun PostCard(
                 style = MaterialTheme.typography.bodyMedium
             )
 
-            val legacyImagePaths = post.images
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.filter { it.isNotEmpty() }
-                .orEmpty()
+            val legacyImagePaths = remember(post.images) {
+                parseLegacyImagePaths(post.images)
+            }
             val hasImageAttachments = postInfo.attachments.any {
                 AttachmentType.fromStorage(it.type) == AttachmentType.IMAGE
             } || legacyImagePaths.isNotEmpty()
@@ -605,6 +653,32 @@ fun CreatePostDialog(
         }
     )
 }
+
+private fun parseLegacyImagePaths(images: String?): List<String> {
+    if (images.isNullOrBlank()) return emptyList()
+    val trimmed = images.trim()
+    return if (trimmed.startsWith("[")) {
+        runCatching {
+            val jsonArray = JSONArray(trimmed)
+            buildList {
+                for (index in 0 until jsonArray.length()) {
+                    val raw = jsonArray.optString(index)
+                    val cleaned = raw.trim().trim('"')
+                    if (cleaned.isNotEmpty()) {
+                        add(cleaned)
+                    }
+                }
+            }
+        }.getOrElse { parseCommaSeparatedImagePaths(trimmed) }
+    } else {
+        parseCommaSeparatedImagePaths(trimmed)
+    }
+}
+
+private fun parseCommaSeparatedImagePaths(value: String): List<String> =
+    value.split(",")
+        .map { it.trim().trim('"') }
+        .filter { it.isNotEmpty() }
 
 /**
  * 格式化时间戳

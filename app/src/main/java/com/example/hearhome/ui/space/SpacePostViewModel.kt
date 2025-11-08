@@ -12,6 +12,7 @@ import com.example.hearhome.utils.NotificationHelper
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 
 /**
  * 空间动态 ViewModel
@@ -27,22 +28,56 @@ class SpacePostViewModel(
     private val context: Context? = null
 ) : ViewModel() {
 
-    // 空间内的所有动态
-    private val _posts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())
-    val posts: StateFlow<List<PostWithAuthorInfo>> = _posts.asStateFlow()
-
-    private var postsJob: Job? = null
+    // 当前选中的 postId
+    private val _selectedPostId = MutableStateFlow<Int?>(null)
+    
+    // 空间内的所有动态（使用响应式Flow，类似comments的实现）
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val posts: StateFlow<List<PostWithAuthorInfo>> = spacePostDao.getSpacePosts(spaceId)
+        .flatMapLatest { postList ->
+            if (postList.isEmpty()) {
+                flowOf(emptyList())
+            } else {
+                val postIds = postList.map { it.id }
+                mediaAttachmentDao
+                    .observeAttachmentsForOwners(
+                        AttachmentOwnerType.SPACE_POST,
+                        postIds
+                    )
+                    .mapLatest { attachments ->
+                        val attachmentsMap = attachments.groupBy { it.ownerId }
+                        postList.map { post ->
+                            val author = userDao.getUserById(post.authorId)
+                            val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
+                            val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
+                            PostWithAuthorInfo(
+                                post = post,
+                                author = author,
+                                hasLiked = hasLiked,
+                                hasFavorited = hasFavorited,
+                                attachments = attachmentsMap[post.id].orEmpty()
+                            )
+                        }
+                    }
+            }
+        }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // 收藏的动态列表
     private val _favoritePosts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())
     val favoritePosts: StateFlow<List<PostWithAuthorInfo>> = _favoritePosts.asStateFlow()
 
-    // 选中的动态详情
-    private val _selectedPost = MutableStateFlow<PostWithAuthorInfo?>(null)
-    val selectedPost: StateFlow<PostWithAuthorInfo?> = _selectedPost.asStateFlow()
-
-    // 当前选中的 postId
-    private val _selectedPostId = MutableStateFlow<Int?>(null)
+    // 选中的动态详情（从posts中获取）
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val selectedPost: StateFlow<PostWithAuthorInfo?> = _selectedPostId
+        .flatMapLatest { postId ->
+            if (postId == null) {
+                flowOf(null)
+            } else {
+                posts.map { postList ->
+                    postList.firstOrNull { it.post.id == postId }
+                }
+            }
+        }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
     // 选中动态的评论列表
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -82,55 +117,6 @@ class SpacePostViewModel(
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-
-    init {
-        loadPosts()
-    }
-
-    /**
-     * 加载空间动态
-     */
-    fun loadPosts() {
-        postsJob?.cancel()
-        postsJob = viewModelScope.launch {
-            spacePostDao.getSpacePosts(spaceId)
-                .flatMapLatest { postList ->
-                    if (postList.isEmpty()) {
-                        flowOf(emptyList())
-                    } else {
-                        val postIds = postList.map { it.id }
-                        mediaAttachmentDao
-                            .observeAttachmentsForOwners(
-                                AttachmentOwnerType.SPACE_POST,
-                                postIds
-                            )
-                            .mapLatest { attachments ->
-                                val attachmentsMap = attachments.groupBy { it.ownerId }
-                                postList.map { post ->
-                                    val author = userDao.getUserById(post.authorId)
-                                    val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
-                                    val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
-                                    PostWithAuthorInfo(
-                                        post = post,
-                                        author = author,
-                                        hasLiked = hasLiked,
-                                        hasFavorited = hasFavorited,
-                                        attachments = attachmentsMap[post.id].orEmpty()
-                                    )
-                                }
-                            }
-                    }
-                }
-                .collect { postsWithInfo ->
-                    _posts.value = postsWithInfo
-                    val selectedId = _selectedPostId.value
-                    if (selectedId != null) {
-                        _selectedPost.value = postsWithInfo.firstOrNull { it.post.id == selectedId }
-                    }
-                }
-        }
-    }
-
     /**
      * 发布新动态
      */
@@ -143,12 +129,13 @@ class SpacePostViewModel(
             val imageUris = attachments
                 .filter { it.type == AttachmentType.IMAGE }
                 .map { it.uri }
+            val imagesJson = if (imageUris.isNotEmpty()) JSONArray(imageUris).toString() else null
 
             val post = SpacePost(
                 spaceId = spaceId,
                 authorId = currentUserId,
                 content = content,
-                images = if (imageUris.isNotEmpty()) imageUris.joinToString(",") else null,
+                images = imagesJson,
                 location = location
             )
 
@@ -204,7 +191,6 @@ class SpacePostViewModel(
             }
 
             spacePostDao.deletePost(postId)
-            loadPosts()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -249,8 +235,6 @@ class SpacePostViewModel(
                 }
             }
             
-            loadPosts()
-            selectPost(postId) // Refresh selected post
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -263,25 +247,6 @@ class SpacePostViewModel(
      */
     fun selectPost(postId: Int) {
         _selectedPostId.value = postId
-        viewModelScope.launch {
-            val post = spacePostDao.getPostById(postId)
-            if (post != null) {
-                val author = userDao.getUserById(post.authorId)
-                val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
-                val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
-                val attachments = mediaAttachmentDao.getAttachments(
-                    AttachmentOwnerType.SPACE_POST,
-                    post.id
-                )
-                _selectedPost.value = PostWithAuthorInfo(
-                    post = post,
-                    author = author,
-                    hasLiked = hasLiked,
-                    hasFavorited = hasFavorited,
-                    attachments = attachments
-                )
-            }
-        }
     }
 
     /**
@@ -337,8 +302,6 @@ class SpacePostViewModel(
                 }
             }
             
-            // 更新帖子列表中的评论数
-            loadPosts()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -365,7 +328,6 @@ class SpacePostViewModel(
 
             spacePostDao.deleteComment(commentId)
             spacePostDao.updateCommentCount(postId, -1)
-            loadPosts()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -399,7 +361,6 @@ class SpacePostViewModel(
                 )
                 postFavoriteDao.addFavorite(favorite)
             }
-            loadPosts()
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -434,11 +395,6 @@ class SpacePostViewModel(
                 _favoritePosts.value = favoritePosts
             }
         }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        postsJob?.cancel()
     }
 }
 
