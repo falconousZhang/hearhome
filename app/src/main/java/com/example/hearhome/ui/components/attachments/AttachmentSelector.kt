@@ -3,7 +3,6 @@ package com.example.hearhome.ui.components.attachments
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -24,7 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import coil.compose.rememberImagePainter
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
 import com.example.hearhome.model.AttachmentType
 import com.example.hearhome.model.PendingAttachment
 import com.example.hearhome.ui.components.AudioPlayer
@@ -148,14 +148,17 @@ fun AttachmentSelector(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(imageAttachments, key = { it.id }) { attachment ->
                     Box {
-                        val painterData = if (attachment.fromContentUri) {
+                        val imageData = if (attachment.fromContentUri) {
                             Uri.parse(attachment.source)
                         } else {
                             File(attachment.source)
                         }
-                        Image(
-                            painter = rememberImagePainter(data = painterData),
-                            contentDescription = null,
+                        SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(imageData)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "预览图片",
                             modifier = Modifier
                                 .size(90.dp)
                                 .clip(RoundedCornerShape(10.dp)),

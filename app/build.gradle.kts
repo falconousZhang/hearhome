@@ -69,6 +69,9 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     testImplementation(libs.junit)
+    testImplementation("org.mockito:mockito-core:5.7.0")
+    testImplementation("org.mockito:mockito-inline:5.2.0")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:1.9.22")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
@@ -76,7 +79,10 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     
-    implementation("io.coil-kt:coil-compose:1.4.0")
+    // 图片加载库 Coil 2.x (更好的 Compose 支持)
+    implementation("io.coil-kt:coil-compose:2.5.0")
+    // ExifInterface 用于处理图片方向信息
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.sun.mail:android-mail:1.6.7")
     implementation("com.sun.mail:android-activation:1.6.7")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
