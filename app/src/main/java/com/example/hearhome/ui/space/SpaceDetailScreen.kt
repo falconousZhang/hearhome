@@ -424,12 +424,28 @@ fun PostCard(
                 style = MaterialTheme.typography.bodyMedium
             )
 
+            // 图片附件展示
             val legacyImagePaths = remember(post.images) {
                 parseLegacyImagePaths(post.images)
             }
-            val hasImageAttachments = postInfo.attachments.any {
+            val imageAttachments = postInfo.attachments.filter {
                 AttachmentType.fromStorage(it.type) == AttachmentType.IMAGE
-            } || legacyImagePaths.isNotEmpty()
+            }
+            
+            // 调试日志：帮助诊断图片加载问题
+            if (imageAttachments.isNotEmpty() || legacyImagePaths.isNotEmpty()) {
+                android.util.Log.d("PostCard", 
+                    "Post ${post.id}: ${imageAttachments.size} attachments, ${legacyImagePaths.size} legacy paths"
+                )
+                imageAttachments.forEach { att ->
+                    android.util.Log.d("PostCard", "  Attachment: ${att.uri}")
+                }
+                legacyImagePaths.forEach { path ->
+                    android.util.Log.d("PostCard", "  Legacy: $path")
+                }
+            }
+            
+            val hasImageAttachments = imageAttachments.isNotEmpty() || legacyImagePaths.isNotEmpty()
             if (hasImageAttachments) {
                 Spacer(Modifier.height(12.dp))
                 AttachmentGallery(

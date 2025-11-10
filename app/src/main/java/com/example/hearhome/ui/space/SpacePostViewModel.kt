@@ -126,21 +126,19 @@ class SpacePostViewModel(
         location: String? = null
     ): Boolean {
         return try {
-            val imageUris = attachments
-                .filter { it.type == AttachmentType.IMAGE }
-                .map { it.uri }
-            val imagesJson = if (imageUris.isNotEmpty()) JSONArray(imageUris).toString() else null
-
+            // 注意：不再使用 images 字段，完全使用 MediaAttachment 表
+            // images 字段保留仅用于兼容旧数据
             val post = SpacePost(
                 spaceId = spaceId,
                 authorId = currentUserId,
                 content = content,
-                images = imagesJson,
+                images = null,  // 新动态不再填充此字段
                 location = location
             )
 
             val postId = spacePostDao.createPost(post).toInt()
 
+            // 保存附件到统一的 MediaAttachment 表
             if (postId > 0 && attachments.isNotEmpty()) {
                 val entities = attachments.map {
                     MediaAttachment(
