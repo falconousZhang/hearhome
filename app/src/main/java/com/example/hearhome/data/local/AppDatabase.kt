@@ -10,12 +10,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 /**
  * 应用主数据库
  * 管理用户表、好友表、情侣表、消息表以及空间相关表
+ * v12：新增 anniversaries（纪念日）表
  */
 @Database(
     entities = [
-        User::class, 
-        Friend::class, 
-        Couple::class, 
+        User::class,
+        Friend::class,
+        Couple::class,
         Message::class,
         Space::class,
         SpaceMember::class,
@@ -23,9 +24,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PostLike::class,
         PostComment::class,
         PostFavorite::class,
-        MediaAttachment::class
+        MediaAttachment::class,
+        Anniversary::class // v12 新增
     ],
-    version = 11,
+    version = 12,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,59 +41,65 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun spacePostDao(): SpacePostDao
     abstract fun postFavoriteDao(): PostFavoriteDao
     abstract fun mediaAttachmentDao(): MediaAttachmentDao
+    abstract fun anniversaryDao(): AnniversaryDao // v12 新增
 
     companion object {
-        @Volatile
-        private var INSTANCE: AppDatabase? = null
-
-        /**
-         * -------------------------------
-         * 数据库迁移逻辑（防止升级后数据丢失）
-         * -------------------------------
-         */
+        @Volatile private var INSTANCE: AppDatabase? = null
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE users ADD COLUMN secQuestion TEXT NOT NULL DEFAULT ''"); db.execSQL(
-                    "ALTER TABLE users ADD COLUMN secAnswerHash TEXT NOT NULL DEFAULT ''"
-                )
+                db.execSQL("ALTER TABLE users ADD COLUMN secQuestion TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE users ADD COLUMN secAnswerHash TEXT NOT NULL DEFAULT ''")
             }
         }
         private val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE users ADD COLUMN nickname TEXT NOT NULL DEFAULT ''"); db.execSQL(
-                    "ALTER TABLE users ADD COLUMN relationshipStatus TEXT NOT NULL DEFAULT 'single'"
-                ); db.execSQL("ALTER TABLE users ADD COLUMN partnerId INTEGER")
+                db.execSQL("ALTER TABLE users ADD COLUMN nickname TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE users ADD COLUMN relationshipStatus TEXT NOT NULL DEFAULT 'single'")
+                db.execSQL("ALTER TABLE users ADD COLUMN partnerId INTEGER")
             }
         }
         private val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS friends (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, senderId INTEGER NOT NULL, receiverId INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', createdAt INTEGER NOT NULL)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS friends (" +
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "senderId INTEGER NOT NULL, receiverId INTEGER NOT NULL, " +
+                            "status TEXT NOT NULL DEFAULT 'pending', createdAt INTEGER NOT NULL)"
+                )
             }
         }
         private val MIGRATION_4_5 = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS couples (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, requesterId INTEGER NOT NULL, partnerId INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', createdAt INTEGER NOT NULL)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS couples (" +
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "requesterId INTEGER NOT NULL, partnerId INTEGER NOT NULL, " +
+                            "status TEXT NOT NULL DEFAULT 'pending', createdAt INTEGER NOT NULL)"
+                )
             }
         }
         private val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE couples ADD COLUMN requesterRemark TEXT"); db.execSQL("ALTER TABLE couples ADD COLUMN partnerRemark TEXT")
+                db.execSQL("ALTER TABLE couples ADD COLUMN requesterRemark TEXT")
+                db.execSQL("ALTER TABLE couples ADD COLUMN partnerRemark TEXT")
             }
         }
         private val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, senderId INTEGER NOT NULL, receiverId INTEGER NOT NULL, content TEXT NOT NULL, timestamp INTEGER NOT NULL, isRead INTEGER NOT NULL DEFAULT 0)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS messages (" +
+                            "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                            "senderId INTEGER NOT NULL, receiverId INTEGER NOT NULL, " +
+                            "content TEXT NOT NULL, timestamp INTEGER NOT NULL, " +
+                            "isRead INTEGER NOT NULL DEFAULT 0)"
+                )
             }
         }
-        
-        /**
-         * 迁移 7 -> 8: 添加空间相关表
-         */
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 创建空间表
-                db.execSQL("""
+                db.execSQL(
+                    """
                     CREATE TABLE IF NOT EXISTS spaces (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         name TEXT NOT NULL,
@@ -103,10 +111,10 @@ abstract class AppDatabase : RoomDatabase() {
                         createdAt INTEGER NOT NULL,
                         status TEXT NOT NULL DEFAULT 'active'
                     )
-                """.trimIndent())
-                
-                // 创建空间成员表
-                db.execSQL("""
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
                     CREATE TABLE IF NOT EXISTS space_members (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         spaceId INTEGER NOT NULL,
@@ -116,10 +124,10 @@ abstract class AppDatabase : RoomDatabase() {
                         joinedAt INTEGER NOT NULL,
                         status TEXT NOT NULL DEFAULT 'active'
                     )
-                """.trimIndent())
-                
-                // 创建空间动态表
-                db.execSQL("""
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
                     CREATE TABLE IF NOT EXISTS space_posts (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         spaceId INTEGER NOT NULL,
@@ -132,20 +140,20 @@ abstract class AppDatabase : RoomDatabase() {
                         commentCount INTEGER NOT NULL DEFAULT 0,
                         status TEXT NOT NULL DEFAULT 'normal'
                     )
-                """.trimIndent())
-                
-                // 创建动态点赞表
-                db.execSQL("""
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
                     CREATE TABLE IF NOT EXISTS post_likes (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         postId INTEGER NOT NULL,
                         userId INTEGER NOT NULL,
                         timestamp INTEGER NOT NULL
                     )
-                """.trimIndent())
-                
-                // 创建动态评论表
-                db.execSQL("""
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
                     CREATE TABLE IF NOT EXISTS post_comments (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         postId INTEGER NOT NULL,
@@ -155,17 +163,14 @@ abstract class AppDatabase : RoomDatabase() {
                         timestamp INTEGER NOT NULL,
                         status TEXT NOT NULL DEFAULT 'normal'
                     )
-                """.trimIndent())
+                    """.trimIndent()
+                )
             }
         }
-        
-        /**
-         * 迁移 8 -> 9: 添加收藏表
-         */
         private val MIGRATION_8_9 = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 创建动态收藏表
-                db.execSQL("""
+                db.execSQL(
+                    """
                     CREATE TABLE IF NOT EXISTS post_favorites (
                         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                         userId INTEGER NOT NULL,
@@ -173,57 +178,72 @@ abstract class AppDatabase : RoomDatabase() {
                         timestamp INTEGER NOT NULL,
                         note TEXT
                     )
-                """.trimIndent())
+                    """.trimIndent()
+                )
             }
         }
-        
-        /**
-         * 迁移 9 -> 10: 为评论表添加语音支持
-         */
         private val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                // 为评论表添加语音字段
                 db.execSQL("ALTER TABLE post_comments ADD COLUMN audioPath TEXT")
                 db.execSQL("ALTER TABLE post_comments ADD COLUMN audioDuration INTEGER")
             }
         }
-
-        /**
-         * 迁移 10 -> 11: 增加通用媒体附件表
-         */
         private val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     """
-                        CREATE TABLE IF NOT EXISTS media_attachments (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                            ownerType TEXT NOT NULL,
-                            ownerId INTEGER NOT NULL,
-                            type TEXT NOT NULL,
-                            uri TEXT NOT NULL,
-                            duration INTEGER,
-                            extra TEXT,
-                            createdAt INTEGER NOT NULL
-                        )
+                    CREATE TABLE IF NOT EXISTS media_attachments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        ownerType TEXT NOT NULL,
+                        ownerId INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        uri TEXT NOT NULL,
+                        duration INTEGER,
+                        extra TEXT,
+                        createdAt INTEGER NOT NULL
+                    )
                     """.trimIndent()
                 )
                 db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS index_media_attachments_ownerType_ownerId ON media_attachments(ownerType, ownerId)"
+                    "CREATE INDEX IF NOT EXISTS index_media_attachments_ownerType_ownerId " +
+                            "ON media_attachments(ownerType, ownerId)"
                 )
             }
         }
 
-        /**
-         * 获取数据库单例
-         */
+        // 11 -> 12：创建纪念日表（含默认值 & 索引）
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS anniversaries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        spaceId INTEGER NOT NULL,
+                        name TEXT NOT NULL,
+                        dateMillis INTEGER NOT NULL,
+                        style TEXT NOT NULL,
+                        creatorUserId INTEGER NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_anniversaries_spaceId ON anniversaries(spaceId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_anniversaries_spaceId_status ON anniversaries(spaceId, status)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "app.db" // 数据库文件名
+                    "app.db"
                 )
-                    // 注册所有迁移
                     .addMigrations(
                         MIGRATION_1_2,
                         MIGRATION_2_3,
@@ -234,9 +254,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_7_8,
                         MIGRATION_8_9,
                         MIGRATION_9_10,
-                        MIGRATION_10_11
+                        MIGRATION_10_11,
+                        MIGRATION_11_12
                     )
-                    .fallbackToDestructiveMigration()
+                    // 如需强制清库调试可打开：.fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }

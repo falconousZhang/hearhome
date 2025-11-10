@@ -20,24 +20,28 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.data.local.*
 import com.example.hearhome.model.AttachmentType
 import com.example.hearhome.model.PendingAttachment
 import com.example.hearhome.ui.components.EmojiTextField
-import com.example.hearhome.ui.components.attachments.AttachmentSelector
 import com.example.hearhome.ui.components.attachments.AttachmentAudioList
 import com.example.hearhome.ui.components.attachments.AttachmentGallery
+import com.example.hearhome.ui.components.attachments.AttachmentSelector
 import com.example.hearhome.utils.AttachmentFileHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlin.math.max
 
 /**
  * 空间详情界面
- * 显示空间动态、成员等信息
+ * 顶部新增：纪念日倒计时卡片
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,8 +52,9 @@ fun SpaceDetailScreen(
 ) {
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
-    
-    // 空间管理ViewModel - 使用 key 确保每个空间使用独立的实例
+    val anniversaryDao = remember { db.anniversaryDao() }
+
+    // 空间管理 VM
     val spaceViewModel: SpaceViewModel = viewModel(
         key = "space_detail_$spaceId",
         factory = SpaceViewModelFactory(
@@ -59,8 +64,7 @@ fun SpaceDetailScreen(
             currentUserId
         )
     )
-    
-    // 空间动态ViewModel
+    // 动态 VM
     val postViewModel: SpacePostViewModel = viewModel(
         factory = SpacePostViewModelFactory(
             db.spacePostDao(),
@@ -72,26 +76,35 @@ fun SpaceDetailScreen(
             context
         )
     )
-    
+
     val currentSpace by spaceViewModel.currentSpace.collectAsState()
     val posts by postViewModel.posts.collectAsState()
     val currentUserRole by spaceViewModel.currentUserRole.collectAsState()
     val spaceMembers by spaceViewModel.spaceMembers.collectAsState()
     val scope = rememberCoroutineScope()
-    
-    // 判断是否有管理权限（管理员或所有者）
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
-    
-    // 状态管理
+
+    // 纪念日加载与倒计时刷新
+    var anniversaries by remember { mutableStateOf(listOf<Anniversary>()) }
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(spaceId) {
+        spaceViewModel.selectSpace(spaceId)
+        anniversaries = withContext(Dispatchers.IO) {
+            anniversaryDao.listBySpace(spaceId).filter { it.status == "active" }
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000) // 每分钟刷新一次
+            now = System.currentTimeMillis()
+        }
+    }
+
     var showPostDialog by remember { mutableStateOf(false) }
     var showMembersDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
-    
-    // 加载空间信息和用户角色
-    LaunchedEffect(spaceId) {
-        spaceViewModel.selectSpace(spaceId)
-    }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -114,7 +127,7 @@ fun SpaceDetailScreen(
                             onDismissRequest = { showMoreMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { 
+                                text = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Default.Star, null, Modifier.size(20.dp))
                                         Spacer(Modifier.width(8.dp))
@@ -133,9 +146,7 @@ fun SpaceDetailScreen(
                                     navController.navigate("space_info/$spaceId/$currentUserId")
                                 }
                             )
-                            // 显示成员管理选项（管理员和所有者可见）
-                            // 只要 currentUserRole 是 admin 或 owner 就显示
-                            if (currentUserRole == "admin" || currentUserRole == "owner") {
+                            if (isAdmin) {
                                 DropdownMenuItem(
                                     text = { Text("成员管理") },
                                     onClick = {
@@ -144,15 +155,21 @@ fun SpaceDetailScreen(
                                     }
                                 )
                             }
+                            Divider()
+                            DropdownMenuItem(
+                                text = { Text("纪念日") },
+                                onClick = {
+                                    showMoreMenu = false
+                                    navController.navigate("anniversary/$spaceId/$currentUserId")
+                                }
+                            )
                         }
                     }
                 }
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showPostDialog = true }
-            ) {
+            FloatingActionButton(onClick = { showPostDialog = true }) {
                 Icon(Icons.Default.Edit, "发布动态")
             }
         }
@@ -164,13 +181,17 @@ fun SpaceDetailScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 空间信息卡片
+            // 纪念日倒计时卡片
             item {
-                currentSpace?.let { space ->
-                    SpaceInfoCard(space)
-                }
+                AnniversaryCountdownCard(
+                    anniversaries = anniversaries,
+                    nowMillis = now,
+                    onManage = { navController.navigate("anniversary/$spaceId/$currentUserId") }
+                )
             }
-            
+            // 空间信息
+            item { currentSpace?.let { SpaceInfoCard(it) } }
+
             // 动态列表
             if (posts.isEmpty()) {
                 item {
@@ -192,48 +213,28 @@ fun SpaceDetailScreen(
                     PostCard(
                         postInfo = postInfo,
                         currentUserId = currentUserId,
-                        onLike = {
-                            scope.launch {
-                                postViewModel.toggleLike(postInfo.post.id)
-                            }
-                        },
+                        onLike = { scope.launch { postViewModel.toggleLike(postInfo.post.id) } },
                         onComment = {
                             navController.navigate("post_detail/${postInfo.post.id}/$currentUserId")
                         },
-                        onDelete = {
-                            scope.launch {
-                                postViewModel.deletePost(postInfo.post.id)
-                            }
-                        },
-                        onFavorite = {
-                            scope.launch {
-                                postViewModel.toggleFavorite(postInfo.post.id)
-                            }
-                        }
+                        onDelete = { scope.launch { postViewModel.deletePost(postInfo.post.id) } },
+                        onFavorite = { scope.launch { postViewModel.toggleFavorite(postInfo.post.id) } }
                     )
                 }
             }
         }
     }
-    
-    // 发布动态对话框
+
     if (showPostDialog) {
         CreatePostScreen(
             onDismiss = { showPostDialog = false },
             onPost = { content, pendingAttachments ->
                 scope.launch {
                     val resolvedAttachments = withContext(Dispatchers.IO) {
-                        AttachmentFileHelper.resolvePendingAttachments(
-                            context,
-                            pendingAttachments
-                        )
+                        AttachmentFileHelper.resolvePendingAttachments(context, pendingAttachments)
                     }
-                    // 发布动态
                     val success = postViewModel.createPost(content, resolvedAttachments)
-                    if (success) {
-                        showPostDialog = false
-                        // 响应式Flow会自动更新，无需手动刷新
-                    }
+                    if (success) showPostDialog = false
                 }
             }
         )
@@ -247,6 +248,136 @@ fun SpaceDetailScreen(
     }
 }
 
+/* ------------------- 纪念日倒计时卡片 ------------------- */
+
+@Composable
+private fun AnniversaryCountdownCard(
+    anniversaries: List<Anniversary>,
+    nowMillis: Long,
+    onManage: () -> Unit
+) {
+    val upcoming = remember(anniversaries, nowMillis) {
+        anniversaries
+            .map { it to nextOccurrenceMillis(it.dateMillis, nowMillis) }
+            .sortedBy { it.second }
+            .take(3)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // ✅ 正确：Row 的子项使用 Modifier.weight(1f)
+                Text(
+                    "纪念日倒计时",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onManage) { Text("管理纪念日") }
+            }
+
+            if (upcoming.isEmpty()) {
+                Text(
+                    "暂无已生效的纪念日，去“管理纪念日”新建一个吧～",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Spacer(Modifier.height(8.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    upcoming.forEach { (ann, target) ->
+                        val remain = max(0, target - nowMillis)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            when (ann.style) {
+                                "ring" -> RingCountdown(remain, ann.name, target)
+                                else -> SimpleCountdown(remain, ann.name, target)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SimpleCountdown(
+    remainingMillis: Long,
+    title: String,
+    target: Long,
+    modifier: Modifier = Modifier
+) {
+    val (d, h, m) = splitTime(remainingMillis)
+
+    Column(modifier = modifier) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            "还有 ${d}天 ${h}小时 ${m}分钟",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                .format(Date(target)),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+
+@Composable
+private fun RingCountdown(remainingMillis: Long, title: String, target: Long) {
+    val totalOneYear = 365L * 24 * 60 * 60 * 1000 // 粗略一年
+    val progress = 1f - (remainingMillis.toFloat() / totalOneYear.toFloat()).coerceIn(0f, 1f)
+
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CircularProgressIndicator(progress = progress, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+        Spacer(Modifier.width(12.dp))
+        SimpleCountdown(remainingMillis, title, target)
+    }
+}
+
+/* 计算下一次触发时刻（每年同月同日同时间） */
+private fun nextOccurrenceMillis(baseMillis: Long, now: Long): Long {
+    val base = Calendar.getInstance().apply { timeInMillis = baseMillis }
+    val target = Calendar.getInstance().apply { timeInMillis = now }
+    target.set(Calendar.MONTH, base.get(Calendar.MONTH))
+    target.set(Calendar.DAY_OF_MONTH, base.get(Calendar.DAY_OF_MONTH))
+    target.set(Calendar.HOUR_OF_DAY, base.get(Calendar.HOUR_OF_DAY))
+    target.set(Calendar.MINUTE, base.get(Calendar.MINUTE))
+    target.set(Calendar.SECOND, 0)
+    target.set(Calendar.MILLISECOND, 0)
+    if (target.timeInMillis <= now) target.add(Calendar.YEAR, 1)
+    return target.timeInMillis
+}
+
+private fun splitTime(millis: Long): Triple<Long, Long, Long> {
+    val minutes = millis / 60_000
+    val days = minutes / (60 * 24)
+    val hours = (minutes % (60 * 24)) / 60
+    val mins = minutes % 60
+    return Triple(days, hours, mins)
+}
+
+/* ------------------- 成员/动态 等你的现有实现（保持不变） ------------------- */
+
 @Composable
 private fun SpaceMembersDialog(
     members: List<SpaceMemberInfo>,
@@ -254,11 +385,7 @@ private fun SpaceMembersDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
-        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
         title = { Text("空间成员") },
         text = {
             if (members.isEmpty()) {
@@ -306,16 +433,14 @@ private fun SpaceMembersDialog(
 }
 
 @Composable
-fun SpaceInfoCard(space: com.example.hearhome.data.local.Space) {
+fun SpaceInfoCard(space: Space) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = Color(space.coverColor.toColorInt()).copy(alpha = 0.1f)
         )
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.Group,
@@ -332,15 +457,10 @@ fun SpaceInfoCard(space: com.example.hearhome.data.local.Space) {
                     style = MaterialTheme.typography.labelMedium
                 )
             }
-            
-            if (space.description != null) {
+            space.description?.let {
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    text = space.description,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Text(it, style = MaterialTheme.typography.bodyMedium)
             }
-            
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -367,14 +487,9 @@ fun PostCard(
 ) {
     val post = postInfo.post
     val author = postInfo.author
-    
-    Card(
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            // 作者信息
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -385,9 +500,7 @@ fun PostCard(
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(
-                                Color(author?.avatarColor?.toColorInt() ?: 0xFFCCCCCC.toInt())
-                            )
+                            .background(Color(author?.avatarColor?.toColorInt() ?: 0xFFCCCCCC.toInt()))
                     )
                     Spacer(Modifier.width(12.dp))
                     Column {
@@ -403,26 +516,12 @@ fun PostCard(
                         )
                     }
                 }
-                
-                // 删除按钮(仅作者可见)
                 if (post.authorId == currentUserId) {
                     IconButton(onClick = onDelete) {
-                        Icon(
-                            Icons.Default.Delete,
-                            "删除",
-                            tint = MaterialTheme.colorScheme.error
-                        )
+                        Icon(Icons.Default.Delete, "删除", tint = MaterialTheme.colorScheme.error)
                     }
                 }
             }
-            
-            Spacer(Modifier.height(12.dp))
-            
-            // 动态内容
-            Text(
-                text = post.content,
-                style = MaterialTheme.typography.bodyMedium
-            )
 
             // 图片附件展示
             val legacyImagePaths = remember(post.images) {
@@ -467,7 +566,6 @@ fun PostCard(
                 )
             }
 
-            // 定位信息
             if (post.location != null) {
                 Spacer(Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -485,43 +583,34 @@ fun PostCard(
                     )
                 }
             }
-            
+
             Spacer(Modifier.height(12.dp))
             HorizontalDivider()
             Spacer(Modifier.height(8.dp))
-            
-            // 操作按钮
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                // 点赞
                 TextButton(onClick = onLike) {
                     Icon(
                         imageVector = if (postInfo.hasLiked) Icons.Filled.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = "点赞",
                         tint = if (postInfo.hasLiked) Color.Red else MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(Modifier.width(4.dp))
-                    Text("${post.likeCount}")
+                    Spacer(Modifier.width(4.dp)); Text("${post.likeCount}")
                 }
-                
-                // 评论
                 TextButton(onClick = onComment) {
                     Icon(Icons.Default.Comment, "评论")
-                    Spacer(Modifier.width(4.dp))
-                    Text("${post.commentCount}")
+                    Spacer(Modifier.width(4.dp)); Text("${post.commentCount}")
                 }
-                
-                // 收藏
                 TextButton(onClick = onFavorite) {
                     Icon(
                         imageVector = if (postInfo.hasFavorited) Icons.Filled.Star else Icons.Default.StarBorder,
                         contentDescription = "收藏",
                         tint = if (postInfo.hasFavorited) Color(0xFFFFD700) else MaterialTheme.colorScheme.onSurface
                     )
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (postInfo.hasFavorited) "已收藏" else "收藏")
+                    Spacer(Modifier.width(4.dp)); Text(if (postInfo.hasFavorited) "已收藏" else "收藏")
                 }
             }
         }
@@ -559,64 +648,15 @@ fun CreatePostScreen(
         },
         confirmButton = {
             Button(
-                onClick = {
-                    if (content.isNotBlank() || attachments.isNotEmpty()) {
-                        onPost(content, attachments)
-                    }
-                },
+                onClick = { if (content.isNotBlank() || attachments.isNotEmpty()) onPost(content, attachments) },
                 enabled = content.isNotBlank() || attachments.isNotEmpty()
-            ) {
-                Text("发布")
-            }
+            ) { Text("发布") }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
 }
 
-@Composable
-fun CreatePostDialog(
-    onDismiss: () -> Unit,
-    onPost: (String) -> Unit
-) {
-    var content by remember { mutableStateOf("") }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("发布动态") },
-        text = {
-            OutlinedTextField(
-                value = content,
-                onValueChange = { content = it },
-                label = { Text("说点什么...") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp),
-                maxLines = 10
-            )
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (content.isNotBlank()) {
-                        onPost(content)
-                    }
-                },
-                enabled = content.isNotBlank()
-            ) {
-                Text("发布")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
-    )
-}
+/* ------------------- 工具 ------------------- */
 
 private fun parseLegacyImagePaths(images: String?): List<String> {
     if (images.isNullOrBlank()) return emptyList()
@@ -628,37 +668,24 @@ private fun parseLegacyImagePaths(images: String?): List<String> {
                 for (index in 0 until jsonArray.length()) {
                     val raw = jsonArray.optString(index)
                     val cleaned = raw.trim().trim('"')
-                    if (cleaned.isNotEmpty()) {
-                        add(cleaned)
-                    }
+                    if (cleaned.isNotEmpty()) add(cleaned)
                 }
             }
         }.getOrElse { parseCommaSeparatedImagePaths(trimmed) }
-    } else {
-        parseCommaSeparatedImagePaths(trimmed)
-    }
+    } else parseCommaSeparatedImagePaths(trimmed)
 }
 
 private fun parseCommaSeparatedImagePaths(value: String): List<String> =
-    value.split(",")
-        .map { it.trim().trim('"') }
-        .filter { it.isNotEmpty() }
+    value.split(",").map { it.trim().trim('"') }.filter { it.isNotEmpty() }
 
-/**
- * 格式化时间戳
- */
 fun formatTimestamp(timestamp: Long): String {
     val now = System.currentTimeMillis()
     val diff = now - timestamp
-    
     return when {
         diff < 60_000 -> "刚刚"
-        diff < 3600_000 -> "${diff / 60_000}分钟前"
-        diff < 86400_000 -> "${diff / 3600_000}小时前"
-        diff < 604800_000 -> "${diff / 86400_000}天前"
-        else -> {
-            val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
-            sdf.format(Date(timestamp))
-        }
+        diff < 3_600_000 -> "${diff / 60_000}分钟前"
+        diff < 86_400_000 -> "${diff / 3_600_000}小时前"
+        diff < 604_800_000 -> "${diff / 86_400_000}天前"
+        else -> SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
     }
 }

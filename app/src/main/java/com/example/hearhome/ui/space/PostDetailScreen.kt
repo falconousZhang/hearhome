@@ -45,17 +45,17 @@ fun PostDetailScreen(
 ) {
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
-    
+
     // 需要先获取post才能知道spaceId
     var spaceId by remember { mutableIntStateOf(0) }
-    
+
     LaunchedEffect(postId) {
         val post = db.spacePostDao().getPostById(postId)
         if (post != null) {
             spaceId = post.spaceId
         }
     }
-    
+
     if (spaceId == 0) {
         // 加载中
         Box(
@@ -66,7 +66,7 @@ fun PostDetailScreen(
         }
         return
     }
-    
+
     // 使用key让ViewModel在spaceId变化时重新创建
     val viewModel: SpacePostViewModel = viewModel(
         key = "post_detail_$spaceId",
@@ -80,19 +80,19 @@ fun PostDetailScreen(
             context
         )
     )
-    
+
     val selectedPost by viewModel.selectedPost.collectAsState()
     val comments by viewModel.comments.collectAsState()
     val scope = rememberCoroutineScope()
-    
+
     var commentText by remember { mutableStateOf("") }
     var replyToUser by remember { mutableStateOf<CommentInfo?>(null) }
     var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
-    
+
     LaunchedEffect(postId) {
         viewModel.selectPost(postId)
     }
-    
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -144,7 +144,7 @@ fun PostDetailScreen(
                         )
                     }
                 }
-                
+
                 // 评论分隔
                 item {
                     HorizontalDivider()
@@ -155,7 +155,7 @@ fun PostDetailScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
-                
+
                 // 评论列表
                 if (comments.isEmpty()) {
                     item {
@@ -192,7 +192,7 @@ fun PostDetailScreen(
                     }
                 }
             }
-            
+
             // 评论输入框
             Surface(
                 shadowElevation = 8.dp,
@@ -295,7 +295,7 @@ fun CommentItem(
     val comment = commentInfo.comment
     val author = commentInfo.author
     val replyToUser = commentInfo.replyToUser
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -330,7 +330,7 @@ fun CommentItem(
                         )
                     }
                 }
-                
+
                 Row {
                     IconButton(onClick = onReply) {
                         Icon(
@@ -351,9 +351,9 @@ fun CommentItem(
                     }
                 }
             }
-            
+
             Spacer(Modifier.height(8.dp))
-            
+
             val hasAudioAttachments = commentInfo.attachments.any {
                 AttachmentType.fromStorage(it.type) == AttachmentType.AUDIO
             }
@@ -386,7 +386,7 @@ fun CommentItem(
                 )
                 Spacer(Modifier.height(4.dp))
             }
-            
+
             // 显示回复对象
             if (replyToUser != null) {
                 Text(
