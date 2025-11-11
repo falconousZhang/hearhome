@@ -38,5 +38,9 @@ data class Space(
     val createdAt: Long = System.currentTimeMillis(),
     
     // 空间状态: active / archived
-    val status: String = "active"
+    val status: String = "active",
+    
+    // 打卡间隔时间（单位：秒），0表示未设置
+    // 用于提醒成员定期在空间发布动态
+    val checkInIntervalSeconds: Long = 0
 )

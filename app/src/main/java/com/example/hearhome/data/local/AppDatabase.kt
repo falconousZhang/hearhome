@@ -10,7 +10,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 /**
  * 应用主数据库
  * 管理用户表、好友表、情侣表、消息表以及空间相关表
- * v12：新增 anniversaries（纪念日）表
+ * v13：空间表新增 checkInIntervalSeconds 字段（打卡间隔）
+ *      + 新增 post_mentions 表（动态提醒功能）
  */
 @Database(
     entities = [
@@ -25,9 +26,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         PostComment::class,
         PostFavorite::class,
         MediaAttachment::class,
-        Anniversary::class // v12 新增
+        Anniversary::class, // v12 新增
+        PostMention::class  // v13 新增
     ],
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -42,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun postFavoriteDao(): PostFavoriteDao
     abstract fun mediaAttachmentDao(): MediaAttachmentDao
     abstract fun anniversaryDao(): AnniversaryDao // v12 新增
+    abstract fun postMentionDao(): PostMentionDao // v13 新增
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
@@ -237,6 +240,43 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // 12 -> 13：空间表新增打卡间隔字段 + 创建动态提醒表
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 1. 空间表新增打卡间隔字段
+                db.execSQL(
+                    "ALTER TABLE spaces ADD COLUMN checkInIntervalSeconds INTEGER NOT NULL DEFAULT 0"
+                )
+                
+                // 2. 创建动态提醒表
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS post_mentions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        postId INTEGER NOT NULL,
+                        mentionedUserId INTEGER NOT NULL,
+                        mentionerUserId INTEGER NOT NULL,
+                        timeoutSeconds INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        viewedAt INTEGER,
+                        lastNotifiedAt INTEGER,
+                        status TEXT NOT NULL DEFAULT 'pending'
+                    )
+                    """.trimIndent()
+                )
+                // 创建索引提高查询性能
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_post_mentions_postId ON post_mentions(postId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_post_mentions_mentionedUserId ON post_mentions(mentionedUserId)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_post_mentions_status ON post_mentions(mentionedUserId, status)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -255,8 +295,10 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_8_9,
                         MIGRATION_9_10,
                         MIGRATION_10_11,
-                        MIGRATION_11_12
+                        MIGRATION_11_12,
+                        MIGRATION_12_13
                     )
+                    .fallbackToDestructiveMigration()
                     // 如需强制清库调试可打开：.fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

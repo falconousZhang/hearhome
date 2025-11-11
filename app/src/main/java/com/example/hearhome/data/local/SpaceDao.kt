@@ -220,4 +220,24 @@ interface SpaceDao {
      */
     @Query("UPDATE space_members SET status = :status WHERE spaceId = :spaceId")
     suspend fun updateMembersStatusBySpace(spaceId: Int, status: String)
+    
+    // ==================== 打卡设置 ====================
+    
+    /**
+     * 更新空间的打卡间隔时间（单位：秒）
+     * @param spaceId 空间ID
+     * @param intervalSeconds 打卡间隔时间，0表示关闭打卡功能
+     */
+    @Query("UPDATE spaces SET checkInIntervalSeconds = :intervalSeconds WHERE id = :spaceId")
+    suspend fun updateCheckInInterval(spaceId: Int, intervalSeconds: Long)
+    
+    /**
+     * 获取指定用户在指定空间的最后一条动态发布时间
+     * @return 最后发布时间的时间戳（毫秒），如果没有动态则返回null
+     */
+    @Query("""
+        SELECT MAX(timestamp) FROM space_posts 
+        WHERE spaceId = :spaceId AND authorId = :userId AND status = 'normal'
+    """)
+    suspend fun getLastPostTimeByUser(spaceId: Int, userId: Int): Long?
 }

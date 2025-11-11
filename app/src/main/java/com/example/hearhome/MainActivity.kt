@@ -10,6 +10,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -33,8 +36,13 @@ import com.example.hearhome.ui.search.SearchUserScreen
 import com.example.hearhome.ui.space.*
 import com.example.hearhome.ui.theme.HearHomeTheme
 import com.example.hearhome.utils.NotificationHelper
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
+    
+    // 标记：是否需要检查提醒（从后台恢复时触发）
+    private var shouldCheckReminders = mutableStateOf(false)
+    
     @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,6 +50,14 @@ class MainActivity : ComponentActivity() {
 
         // 初始化通知渠道
         NotificationHelper.createNotificationChannels(this)
+        
+        // 监听应用前后台切换
+        lifecycleScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // 应用切换到前台时，标记需要检查提醒
+                shouldCheckReminders.value = true
+            }
+        }
 
         // 从通知携带的深链参数（可为空）
         val navigateTarget = intent?.getStringExtra("navigate")

@@ -119,12 +119,13 @@ class SpacePostViewModel(
 
     /**
      * 发布新动态
+     * @return 新创建的动态ID，失败返回-1
      */
     suspend fun createPost(
         content: String,
         attachments: List<ResolvedAttachment> = emptyList(),
         location: String? = null
-    ): Boolean {
+    ): Long {
         return try {
             // 注意：不再使用 images 字段，完全使用 MediaAttachment 表
             // images 字段保留仅用于兼容旧数据
@@ -136,14 +137,14 @@ class SpacePostViewModel(
                 location = location
             )
 
-            val postId = spacePostDao.createPost(post).toInt()
+            val postId = spacePostDao.createPost(post)
 
             // 保存附件到统一的 MediaAttachment 表
             if (postId > 0 && attachments.isNotEmpty()) {
                 val entities = attachments.map {
                     MediaAttachment(
                         ownerType = AttachmentOwnerType.SPACE_POST,
-                        ownerId = postId,
+                        ownerId = postId.toInt(),
                         type = it.type.name,
                         uri = it.uri,
                         duration = it.duration
@@ -152,10 +153,10 @@ class SpacePostViewModel(
                 mediaAttachmentDao.insertAttachments(entities)
             }
 
-            true
+            postId
         } catch (e: Exception) {
             e.printStackTrace()
-            false
+            -1L
         }
     }
 
