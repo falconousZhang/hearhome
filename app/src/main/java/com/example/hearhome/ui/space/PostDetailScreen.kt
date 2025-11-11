@@ -91,6 +91,19 @@ fun PostDetailScreen(
 
     LaunchedEffect(postId) {
         viewModel.selectPost(postId)
+        
+        // 记录用户查看该动态的时间（如果用户被@提醒了）
+        withContext(Dispatchers.IO) {
+            try {
+                db.postMentionDao().markAsViewed(
+                    postId = postId,
+                    userId = currentUserId,
+                    viewedTime = System.currentTimeMillis()
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     Scaffold(

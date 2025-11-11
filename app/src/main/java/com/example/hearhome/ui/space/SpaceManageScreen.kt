@@ -164,6 +164,26 @@ fun SpaceManageScreen(
                 }
             }
             
+            // 打卡设置（仅管理员可见）
+            item {
+                currentSpace?.let { space ->
+                    CheckInSettingsCard(
+                        space = space,
+                        onUpdateInterval = { intervalSeconds ->
+                            scope.launch {
+                                try {
+                                    db.spaceDao().updateCheckInInterval(spaceId, intervalSeconds)
+                                    snackbarHostState.showSnackbar("打卡设置已更新")
+                                    viewModel.selectSpace(spaceId) // 刷新空间信息
+                                } catch (e: Exception) {
+                                    snackbarHostState.showSnackbar("更新失败：${e.message}")
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+            
             // 待审核成员
             if (pendingMembers.isNotEmpty()) {
                 item {
@@ -443,5 +463,172 @@ fun MemberCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * 打卡设置卡片
+ * 允许管理员设置成员动态发布的最大间隔时间
+ */
+@Composable
+fun CheckInSettingsCard(
+    space: com.example.hearhome.data.local.Space,
+    onUpdateInterval: (Long) -> Unit
+) {
+    var showDialog by remember { mutableStateOf(false) }
+    var hours by remember { mutableStateOf("0") }
+    var minutes by remember { mutableStateOf("0") }
+    var seconds by remember { mutableStateOf("0") }
+    
+    // 将当前间隔转换为时分秒
+    val currentIntervalSeconds = space.checkInIntervalSeconds
+    val currentHours = currentIntervalSeconds / 3600
+    val currentMinutes = (currentIntervalSeconds % 3600) / 60
+    val currentSeconds = currentIntervalSeconds % 60
+    
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "打卡设置",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.height(8.dp))
+            
+            if (currentIntervalSeconds > 0) {
+                Text(
+                    "当前打卡间隔：${currentHours}小时 ${currentMinutes}分钟 ${currentSeconds}秒",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "成员需要在此时间内发布新动态，否则将收到提醒",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    "未设置打卡间隔",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "设置后，成员将定期收到发布动态的提醒",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            
+            Spacer(Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { showDialog = true },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(if (currentIntervalSeconds > 0) "修改设置" else "设置打卡")
+                }
+                
+                if (currentIntervalSeconds > 0) {
+                    OutlinedButton(
+                        onClick = { onUpdateInterval(0) },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("关闭打卡")
+                    }
+                }
+            }
+        }
+    }
+    
+    // 设置对话框
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("设置打卡间隔") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "设置成员发布动态的最大间隔时间",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = hours,
+                            onValueChange = { 
+                                if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                                    hours = it
+                                }
+                            },
+                            label = { Text("小时") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        Text(":")
+                        OutlinedTextField(
+                            value = minutes,
+                            onValueChange = { 
+                                if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
+                                    minutes = it
+                                }
+                            },
+                            label = { Text("分钟") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                        Text(":")
+                        OutlinedTextField(
+                            value = seconds,
+                            onValueChange = { 
+                                if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
+                                    seconds = it
+                                }
+                            },
+                            label = { Text("秒") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
+                        )
+                    }
+                    
+                    Text(
+                        "示例：设置为 24:00:00 表示每天需要发布一次动态",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val h = hours.toLongOrNull() ?: 0
+                        val m = minutes.toLongOrNull() ?: 0
+                        val s = seconds.toLongOrNull() ?: 0
+                        val totalSeconds = h * 3600 + m * 60 + s
+                        
+                        if (totalSeconds > 0) {
+                            onUpdateInterval(totalSeconds)
+                            showDialog = false
+                        }
+                    }
+                ) {
+                    Text("确定")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }

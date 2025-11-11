@@ -189,8 +189,16 @@ fun SpaceDetailScreen(
                     onManage = { navController.navigate("anniversary/$spaceId/$currentUserId") }
                 )
             }
-            // 空间信息
-            item { currentSpace?.let { SpaceInfoCard(it) } }
+            // 空间信息（含打卡状态）
+            item { 
+                currentSpace?.let { space ->
+                    SpaceInfoCard(
+                        space = space,
+                        currentUserId = currentUserId,
+                        spaceDao = db.spaceDao()
+                    )
+                } 
+            }
 
             // 动态列表
             if (posts.isEmpty()) {
@@ -227,14 +235,30 @@ fun SpaceDetailScreen(
 
     if (showPostDialog) {
         CreatePostScreen(
+            spaceMembers = spaceMembers,
+            currentUserId = currentUserId,
             onDismiss = { showPostDialog = false },
-            onPost = { content, pendingAttachments ->
+            onPost = { content, pendingAttachments, mentionedUserIds, timeoutSeconds ->
                 scope.launch {
                     val resolvedAttachments = withContext(Dispatchers.IO) {
                         AttachmentFileHelper.resolvePendingAttachments(context, pendingAttachments)
                     }
-                    val success = postViewModel.createPost(content, resolvedAttachments)
-                    if (success) showPostDialog = false
+                    val postId = postViewModel.createPost(content, resolvedAttachments)
+                    if (postId > 0) {
+                        // 创建提醒记录
+                        if (mentionedUserIds.isNotEmpty() && timeoutSeconds > 0) {
+                            val mentions = mentionedUserIds.map { userId ->
+                                PostMention(
+                                    postId = postId.toInt(),
+                                    mentionedUserId = userId,
+                                    mentionerUserId = currentUserId,
+                                    timeoutSeconds = timeoutSeconds
+                                )
+                            }
+                            db.postMentionDao().insertMentions(mentions)
+                        }
+                        showPostDialog = false
+                    }
                 }
             }
         )
@@ -433,7 +457,22 @@ private fun SpaceMembersDialog(
 }
 
 @Composable
-fun SpaceInfoCard(space: Space) {
+fun SpaceInfoCard(
+    space: Space,
+    currentUserId: Int,
+    spaceDao: SpaceDao
+) {
+    var checkInStatus by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    
+    LaunchedEffect(space.id, space.checkInIntervalSeconds) {
+        if (space.checkInIntervalSeconds > 0) {
+            checkInStatus = com.example.hearhome.utils.CheckInHelper.getCheckInStatusText(
+                space, currentUserId, spaceDao
+            )
+        }
+    }
+    
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -461,6 +500,44 @@ fun SpaceInfoCard(space: Space) {
                 Spacer(Modifier.height(8.dp))
                 Text(it, style = MaterialTheme.typography.bodyMedium)
             }
+            
+            // 打卡状态显示
+            if (space.checkInIntervalSeconds > 0 && checkInStatus != null) {
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            color = if (checkInStatus == "需要打卡") 
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                            else 
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                            shape = MaterialTheme.shapes.small
+                        )
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = null,
+                        tint = if (checkInStatus == "需要打卡")
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "打卡提醒: $checkInStatus",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (checkInStatus == "需要打卡")
+                            MaterialTheme.colorScheme.error
+                        else
+                            MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -523,6 +600,15 @@ fun PostCard(
                 }
             }
 
+            // 动态文字内容
+            if (post.content.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = post.content,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
             // 图片附件展示
             val legacyImagePaths = remember(post.images) {
                 parseLegacyImagePaths(post.images)
@@ -583,6 +669,13 @@ fun PostCard(
                     )
                 }
             }
+            
+            // 提醒状态显示
+            PostMentionStatusView(
+                postId = post.id,
+                authorId = post.authorId,
+                currentUserId = currentUserId
+            )
 
             Spacer(Modifier.height(12.dp))
             HorizontalDivider()
@@ -619,17 +712,31 @@ fun PostCard(
 
 @Composable
 fun CreatePostScreen(
+    spaceMembers: List<SpaceMemberInfo>,
+    currentUserId: Int,
     onDismiss: () -> Unit,
-    onPost: (String, List<PendingAttachment>) -> Unit
+    onPost: (String, List<PendingAttachment>, List<Int>, Long) -> Unit
 ) {
     var content by remember { mutableStateOf("") }
     var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
+    var showMentionSettings by remember { mutableStateOf(false) }
+    var selectedUserIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var hours by remember { mutableStateOf("") }
+    var minutes by remember { mutableStateOf("") }
+    var seconds by remember { mutableStateOf("") }
+    
+    // 过滤掉当前用户
+    val selectableMembers = spaceMembers.filter { it.user.uid != currentUserId }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("发布动态") },
         text = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 500.dp)
+            ) {
                 EmojiTextField(
                     value = content,
                     onValueChange = { content = it },
@@ -644,11 +751,151 @@ fun CreatePostScreen(
                     onAttachmentsChange = { attachments = it },
                     enableTestTools = true
                 )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // @提醒功能入口
+                OutlinedButton(
+                    onClick = { showMentionSettings = !showMentionSettings },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Notifications, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (selectedUserIds.isEmpty()) "@提醒某人查看" 
+                        else "@已选择 ${selectedUserIds.size} 人"
+                    )
+                }
+                
+                // 提醒设置展开区域
+                if (showMentionSettings) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "选择要提醒的成员",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            
+                            // 成员选择列表
+                            LazyColumn(
+                                modifier = Modifier.heightIn(max = 150.dp)
+                            ) {
+                                items(selectableMembers.size) { index ->
+                                    val member = selectableMembers[index]
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                selectedUserIds = if (member.user.uid in selectedUserIds) {
+                                                    selectedUserIds - member.user.uid
+                                                } else {
+                                                    selectedUserIds + member.user.uid
+                                                }
+                                            }
+                                            .padding(vertical = 4.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Checkbox(
+                                            checked = member.user.uid in selectedUserIds,
+                                            onCheckedChange = null
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(member.user.avatarColor.toColorInt()))
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(member.user.nickname)
+                                    }
+                                }
+                            }
+                            
+                            if (selectedUserIds.isNotEmpty()) {
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    "设置查看超时时间",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = hours,
+                                        onValueChange = { 
+                                            if (it.isEmpty() || it.all { char -> char.isDigit() }) {
+                                                hours = it
+                                            }
+                                        },
+                                        label = { Text("时", style = MaterialTheme.typography.labelSmall) },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true
+                                    )
+                                    Text(":")
+                                    OutlinedTextField(
+                                        value = minutes,
+                                        onValueChange = { 
+                                            if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
+                                                minutes = it
+                                            }
+                                        },
+                                        label = { Text("分", style = MaterialTheme.typography.labelSmall) },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true
+                                    )
+                                    Text(":")
+                                    OutlinedTextField(
+                                        value = seconds,
+                                        onValueChange = { 
+                                            if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
+                                                seconds = it
+                                            }
+                                        },
+                                        label = { Text("秒", style = MaterialTheme.typography.labelSmall) },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true
+                                    )
+                                }
+                                
+                                Text(
+                                    "提示：如果被提醒人在此时间内未查看，将收到弹窗提醒",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { if (content.isNotBlank() || attachments.isNotEmpty()) onPost(content, attachments) },
+                onClick = { 
+                    if (content.isNotBlank() || attachments.isNotEmpty()) {
+                        val h = hours.toLongOrNull() ?: 0
+                        val m = minutes.toLongOrNull() ?: 0
+                        val s = seconds.toLongOrNull() ?: 0
+                        val timeoutSeconds = h * 3600 + m * 60 + s
+                        onPost(content, attachments, selectedUserIds.toList(), timeoutSeconds)
+                    }
+                },
                 enabled = content.isNotBlank() || attachments.isNotEmpty()
             ) { Text("发布") }
         },
@@ -687,5 +934,122 @@ fun formatTimestamp(timestamp: Long): String {
         diff < 86_400_000 -> "${diff / 3_600_000}小时前"
         diff < 604_800_000 -> "${diff / 86_400_000}天前"
         else -> SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+    }
+}
+
+/**
+ * 动态提醒状态显示组件
+ * 显示该动态@提醒了谁，以及查看状态
+ */
+@Composable
+fun PostMentionStatusView(
+    postId: Int,
+    authorId: Int,
+    currentUserId: Int
+) {
+    val context = LocalContext.current
+    val db = AppDatabase.getInstance(context)
+    val mentions by db.postMentionDao().getMentionsWithUserInfo(postId).collectAsState(initial = emptyList())
+    
+    // 只有发布者或被提醒人可以看到提醒状态
+    val canViewMentions = currentUserId == authorId || mentions.any { it.mentionedUserId == currentUserId }
+    
+    if (mentions.isNotEmpty() && canViewMentions) {
+        Spacer(Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.Notifications,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "提醒了 ${mentions.size} 人查看",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+                
+                Spacer(Modifier.height(8.dp))
+                
+                mentions.forEach { mention ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Color((mention.avatarColor ?: "#CCCCCC").toColorInt()))
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        
+                        Text(
+                            text = mention.nickname ?: "未知用户",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f)
+                        )
+                        
+                        // 查看状态
+                        if (mention.viewedAt != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = Color(0xFF4CAF50)
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Text(
+                                    text = formatTimestamp(mention.viewedAt),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFF4CAF50)
+                                )
+                            }
+                        } else {
+                            // 显示剩余时间或已超时
+                            val timeoutMillis = mention.createdAt + mention.timeoutSeconds * 1000
+                            val now = System.currentTimeMillis()
+                            
+                            if (now < timeoutMillis) {
+                                val remainingSeconds = (timeoutMillis - now) / 1000
+                                Text(
+                                    text = com.example.hearhome.utils.CheckInHelper.formatInterval(remainingSeconds),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                    Spacer(Modifier.width(2.dp))
+                                    Text(
+                                        text = "未查看",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
