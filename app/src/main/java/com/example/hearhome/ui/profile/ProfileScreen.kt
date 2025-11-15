@@ -160,7 +160,7 @@ fun ProfileScreen(
                 Button(onClick = { authViewModel.updatePassword(email = user.email, oldPassword = oldPassword, securityAnswer = securityAnswerForPasswordChange, newPassword = newPassword, confirmPassword = confirmPassword) }, modifier = Modifier.fillMaxWidth()) { Text("确认修改密码") }
 
                 Spacer(modifier = Modifier.height(32.dp))
-                Text("设置私密问题", style = MaterialTheme.typography.headlineSmall)
+                Text("设置私密问题", style = MaterialTheme. typography.headlineSmall)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // ✅ 恢复设置私密问题的UI
@@ -178,7 +178,7 @@ fun ProfileScreen(
 
             } else {
                 Spacer(modifier = Modifier.weight(1f))
-                Text("无法加载用户信息。")
+                Text(uiState.error ?: "无法加载用户信息。")
                 Spacer(modifier = Modifier.weight(1f))
             }
         }

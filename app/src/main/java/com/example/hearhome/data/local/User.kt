@@ -2,11 +2,13 @@ package com.example.hearhome.data.local
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 用户实体类（Room 数据库表）
  * 存储注册用户的基础信息、密保信息以及社交状态
  */
+@Serializable
 @Entity(tableName = "users")
 data class User(
     // 主键，自增
@@ -31,7 +33,7 @@ data class User(
     // 性别
     val gender: String = "Not specified",
 
-    // 头像颜色，以十六进制字符串存储（例如 "#FF0000"）
+    // 头像颜色，以十六进制字符串存储（例如 \"#FF0000\")
     val avatarColor: String = "#CCCCCC",
 
     // 当前关系状态：single / in_relationship / hidden 等

@@ -4,7 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.local.User
 import com.example.hearhome.data.local.UserDao
+import com.example.hearhome.data.remote.ApiService
+import com.example.hearhome.data.remote.LoginRequest
 import com.example.hearhome.util.Crypto
+import io.ktor.client.call.*
+import io.ktor.http.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -39,12 +43,17 @@ class AuthViewModel(private val userDao: UserDao) : ViewModel() {
                 return@launch
             }
             _authState.value = AuthState.Loading
-            val user = userDao.findByEmail(email.trim())
-            if (user == null || user.password != password) {
-                _authState.value = AuthState.Error("邮箱或密码错误")
-                return@launch
+            try {
+                val response = ApiService.login(LoginRequest(email, password))
+                if (response.status == HttpStatusCode.OK) {
+                    val user = response.body<User>()
+                    _authState.value = AuthState.Success(user)
+                } else {
+                    _authState.value = AuthState.Error("邮箱或密码错误")
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("登录失败: ${e.message}")
             }
-            _authState.value = AuthState.Success(user)
         }
     }
 
@@ -68,12 +77,6 @@ class AuthViewModel(private val userDao: UserDao) : ViewModel() {
 
             _authState.value = AuthState.Loading
 
-            val exist = userDao.findByEmail(email.trim())
-            if (exist != null) {
-                _authState.value = AuthState.Error("该邮箱已注册")
-                return@launch
-            }
-
             val rnd = Random
             val color = android.graphics.Color.argb(255, rnd.nextInt(256), rnd.nextInt(256), rnd.nextInt(256))
             val hexColor = String.format("#%06X", 0xFFFFFF and color)
@@ -88,9 +91,17 @@ class AuthViewModel(private val userDao: UserDao) : ViewModel() {
                 avatarColor = hexColor
             )
 
-            val newUserId = userDao.insert(user)
-            val newUser = user.copy(uid = newUserId.toInt())
-            _authState.value = AuthState.RegisterSuccess(newUser)
+            try {
+                val response = ApiService.register(user)
+                if (response.status == HttpStatusCode.Created) {
+                    val newUser = response.body<User>()
+                    _authState.value = AuthState.RegisterSuccess(newUser)
+                } else {
+                    _authState.value = AuthState.Error("注册失败")
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("注册失败: ${e.message}")
+            }
         }
     }
 
