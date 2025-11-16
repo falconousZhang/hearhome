@@ -5,15 +5,18 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.local.User
 import com.example.hearhome.data.local.UserDao
+import com.example.hearhome.data.remote.ApiService
+import io.ktor.client.call.*
+import io.ktor.http.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 // 1. 定义 UI 状态
 data class ProfileUiState(
     val user: User? = null,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val error: String? = null
 )
 
 // 2. 创建 ViewModel
@@ -25,9 +28,17 @@ class ProfileViewModel(private val userDao: UserDao) : ViewModel() {
     fun loadUser(userId: Int) {
         viewModelScope.launch {
             _uiState.value = ProfileUiState(isLoading = true)
-            // 从 DAO 获取用户数据 (使用 .first() 来从 Flow 中获取一次性数据)
-            val user = userDao.findById(userId).first()
-            _uiState.value = ProfileUiState(user = user, isLoading = false)
+            try {
+                val response = ApiService.getProfile(userId)
+                if (response.status == HttpStatusCode.OK) {
+                    val user = response.body<User>()
+                    _uiState.value = ProfileUiState(user = user, isLoading = false)
+                } else {
+                    _uiState.value = ProfileUiState(error = "Failed to load user profile", isLoading = false)
+                }
+            } catch (e: Exception) {
+                _uiState.value = ProfileUiState(error = e.message, isLoading = false)
+            }
         }
     }
 }

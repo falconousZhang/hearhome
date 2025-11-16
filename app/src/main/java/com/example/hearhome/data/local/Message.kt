@@ -2,7 +2,9 @@ package com.example.hearhome.data.local
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
+@Serializable
 @Entity(tableName = "messages")
 data class Message(
     @PrimaryKey(autoGenerate = true)

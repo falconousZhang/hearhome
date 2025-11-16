@@ -1,5 +1,6 @@
 package com.example.hearhome.ui.search
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -16,27 +17,29 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
-import com.example.hearhome.data.local.AppDatabase
-import com.example.hearhome.data.local.Friend
 import com.example.hearhome.data.local.User
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.example.hearhome.data.remote.ApiService
+import com.example.hearhome.ui.friend.FriendViewModel
+import com.example.hearhome.ui.friend.FriendViewModelFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
     val context = LocalContext.current
-    val db = remember { AppDatabase.getInstance(context) }
-    val userDao = remember { db.userDao() }
-    val friendDao = remember { db.friendDao() }
+    val friendViewModel: FriendViewModel = viewModel(factory = FriendViewModelFactory(ApiService))
+    val uiState by friendViewModel.uiState.collectAsState()
 
     var keyword by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<List<User>>(emptyList()) }
-    var searched by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
+
+    // 当屏幕被销毁时，清除搜索结果
+    DisposableEffect(Unit) {
+        onDispose {
+            friendViewModel.clearSearch()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -60,7 +63,7 @@ fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
             OutlinedTextField(
                 value = keyword,
                 onValueChange = { keyword = it },
-                label = { Text("输入用户ID或昵称搜索") },
+                label = { Text("输入用户ID进行搜索") },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -68,47 +71,55 @@ fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Button(onClick = {
-                    scope.launch {
-                        val users = withContext(Dispatchers.IO) { userDao.searchUsers(keyword) }
-                        results = users.filter { it.uid != currentUserId }
-                        searched = true
+                    val id = keyword.toIntOrNull()
+                    if (id != null) {
+                        friendViewModel.searchUserById(id)
+                    } else {
+                        Toast.makeText(context, "请输入有效的用户ID", Toast.LENGTH_SHORT).show()
                     }
                 }) { Text("搜索") }
 
                 OutlinedButton(onClick = {
                     keyword = ""
-                    results = emptyList()
-                    searched = false
+                    friendViewModel.clearSearch()
                 }) { Text("清空") }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            if (searched && results.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("未找到该用户", color = MaterialTheme.colorScheme.error)
+            when {
+                uiState.isLoading -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
                 }
-            } else {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(results) { user ->
-                        UserCard(
-                            user = user,
-                            onAddFriend = {
-                                scope.launch {
-                                    val exists = withContext(Dispatchers.IO) {
-                                        friendDao.getRelationship(currentUserId, user.uid)
+                uiState.searchCompleted && uiState.searchedUser == null -> {
+                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("未找到该用户", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                uiState.searchedUser != null -> {
+                    if (uiState.searchedUser!!.uid == currentUserId) {
+                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("不能添加自己为好友")
+                        }
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            item { 
+                                UserCard(
+                                    user = uiState.searchedUser!!,
+                                    onAddFriend = {
+                                        friendViewModel.sendFriendRequest(currentUserId, uiState.searchedUser!!.uid)
+                                        Toast.makeText(context, "好友请求已发送", Toast.LENGTH_SHORT).show()
                                     }
-                                    if (exists == null) {
-                                        withContext(Dispatchers.IO) {
-                                            friendDao.insertRequest(
-                                                Friend(senderId = currentUserId, receiverId = user.uid)
-                                            )
-                                        }
-                                        snackbarHostState.showSnackbar("好友请求已发送")
-                                    } else snackbarHostState.showSnackbar("已是好友或请求中")
-                                }
+                                )
                             }
-                        )
+                        }
+                    }
+                }
+                 uiState.error != null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("搜索出错: ${uiState.error}", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }

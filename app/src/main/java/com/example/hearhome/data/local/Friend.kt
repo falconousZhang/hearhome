@@ -2,11 +2,13 @@ package com.example.hearhome.data.local
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 好友关系实体类
  * 表示用户之间的好友请求与状态
  */
+@Serializable
 @Entity(tableName = "friends")
 data class Friend(
     @PrimaryKey(autoGenerate = true)

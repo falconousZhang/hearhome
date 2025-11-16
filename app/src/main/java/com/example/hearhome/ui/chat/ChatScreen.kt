@@ -1,27 +1,48 @@
 package com.example.hearhome.ui.chat
 
-import androidx.compose.foundation.layout.*
+import android.widget.Toast
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import com.example.hearhome.data.local.AppDatabase
-import com.example.hearhome.model.PendingAttachment
+import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.ui.components.EmojiTextField
-import com.example.hearhome.ui.components.attachments.AttachmentSelector
-import com.example.hearhome.utils.AttachmentFileHelper
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,30 +52,28 @@ fun ChatScreen(
     friendUserId: Int
 ) {
     val context = LocalContext.current
-    val db = AppDatabase.getInstance(context)
-    val viewModel: ChatViewModel = viewModel(
-        factory = ChatViewModelFactory(
-            db.messageDao(),
-            db.mediaAttachmentDao(),
-            currentUserId,
-            friendUserId
-        )
-    )
+    val viewModel: ChatViewModel = viewModel(factory = ChatViewModelFactory(ApiService))
+    val uiState by viewModel.uiState.collectAsState()
+    val messages = uiState.messages
+    val friendName = uiState.friendUser?.nickname ?: "好友"
 
-    val messages by viewModel.messages.collectAsState()
     var messageText by remember { mutableStateOf("") }
-    var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
-    var friendNickname by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(friendUserId) {
-        val friend = db.userDao().getUserById(friendUserId)
-        friendNickname = friend?.nickname ?: "用户"
+    // When the screen is launched, start polling for messages
+    // DisposableEffect ensures polling stops when the screen is left
+    DisposableEffect(currentUserId, friendUserId) {
+        viewModel.startPolling(currentUserId, friendUserId)
+        viewModel.loadFriendDetails(friendUserId)
+        
+        onDispose {
+            // You can add logic here to explicitly stop the polling if needed,
+            // but viewModelScope usually handles it.
+        }
     }
 
-    // 当消息列表变化时，自动滚动到底部
     LaunchedEffect(messages) {
         if (messages.isNotEmpty()) {
             coroutineScope.launch {
@@ -63,10 +82,14 @@ fun ChatScreen(
         }
     }
 
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let { Toast.makeText(context, "错误: $it", Toast.LENGTH_SHORT).show() }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("与 $friendNickname 聊天中") },
+                title = { Text("与 $friendName 聊天") },
                 navigationIcon = {
                     IconButton(onClick = { navController.popBackStack() }) {
                         Icon(Icons.Filled.ArrowBack, contentDescription = "返回")
@@ -77,9 +100,7 @@ fun ChatScreen(
         bottomBar = {
             Surface(shadowElevation = 6.dp) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     EmojiTextField(
                         value = messageText,
@@ -92,14 +113,6 @@ fun ChatScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    AttachmentSelector(
-                        attachments = attachments,
-                        onAttachmentsChange = { attachments = it },
-                        enableTestTools = true
-                    )
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
@@ -107,22 +120,10 @@ fun ChatScreen(
                     ) {
                         Button(
                             onClick = {
-                                if (messageText.isNotBlank() || attachments.isNotEmpty()) {
-                                    coroutineScope.launch {
-                                        val resolved = withContext(Dispatchers.IO) {
-                                            AttachmentFileHelper.resolvePendingAttachments(
-                                                context = context,
-                                                attachments = attachments
-                                            )
-                                        }
-                                        val trimmed = messageText.trim()
-                                        viewModel.sendMessage(trimmed, resolved)
-                                        messageText = ""
-                                        attachments = emptyList()
-                                    }
-                                }
+                                viewModel.sendMessage(currentUserId, friendUserId, messageText)
+                                messageText = ""
                             },
-                            enabled = messageText.isNotBlank() || attachments.isNotEmpty()
+                            enabled = messageText.isNotBlank()
                         ) {
                             Text("发送")
                         }
@@ -131,14 +132,18 @@ fun ChatScreen(
             }
         }
     ) { innerPadding ->
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            items(messages) { message ->
-                ChatMessageItem(message = message, currentUserId = currentUserId)
+        if (uiState.isLoading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        } else {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 8.dp)
+            ) {
+                items(messages) { message ->
+                    ChatMessageItem(message = message, currentUserId = currentUserId)
+                }
             }
         }
     }
