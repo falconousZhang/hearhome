@@ -21,7 +21,7 @@ data class ChatScreenState(
     val isLoading: Boolean = false,
     val error: String? = null
 )
-
+//21212121
 class ChatViewModel(private val apiService: ApiService) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ChatScreenState())
