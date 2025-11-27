@@ -1,5 +1,6 @@
 package com.example.hearhome.data.remote
 
+import com.example.hearhome.data.local.Couple
 import com.example.hearhome.data.local.Friend
 import com.example.hearhome.data.local.Message
 import com.example.hearhome.data.local.User
@@ -15,6 +16,9 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class FriendRequest(val senderId: Int, val receiverId: Int)
+
+@Serializable
+data class CoupleRequest(val requesterId: Int, val partnerId: Int)
 
 object ApiService {
     private const val BASE_URL = "http://121.37.136.244:8080"
@@ -87,6 +91,66 @@ object ApiService {
             contentType(ContentType.Application.Json)
             setBody(message)
         }
+    }
+
+    // ==================== 情侣关系相关 API ====================
+    
+    /**
+     * 获取当前用户的情侣关系（已接受的）
+     * @param userId 用户ID
+     * @return 情侣关系信息（如果存在）
+     */
+    suspend fun getCouple(userId: Int): HttpResponse {
+        return client.get("$BASE_URL/couples/$userId")
+    }
+
+    /**
+     * 获取当前用户收到的待处理情侣请求
+     * @param userId 用户ID
+     * @return 待处理的情侣请求列表
+     */
+    suspend fun getCoupleRequests(userId: Int): HttpResponse {
+        return client.get("$BASE_URL/couples/requests/$userId")
+    }
+
+    /**
+     * 发送情侣关系请求
+     * @param requesterId 请求发起者ID
+     * @param partnerId 目标伴侣ID
+     * @return 响应结果
+     */
+    suspend fun sendCoupleRequest(requesterId: Int, partnerId: Int): HttpResponse {
+        return client.post("$BASE_URL/couples/request") {
+            contentType(ContentType.Application.Json)
+            setBody(CoupleRequest(requesterId, partnerId))
+        }
+    }
+
+    /**
+     * 接受情侣关系请求
+     * @param requestId 请求ID
+     * @return 响应结果
+     */
+    suspend fun acceptCoupleRequest(requestId: Int): HttpResponse {
+        return client.post("$BASE_URL/couples/accept/$requestId")
+    }
+
+    /**
+     * 拒绝情侣关系请求
+     * @param requestId 请求ID
+     * @return 响应结果
+     */
+    suspend fun rejectCoupleRequest(requestId: Int): HttpResponse {
+        return client.post("$BASE_URL/couples/reject/$requestId")
+    }
+
+    /**
+     * 解除情侣关系
+     * @param userId 用户ID（发起解除的一方）
+     * @return 响应结果
+     */
+    suspend fun breakupCouple(userId: Int): HttpResponse {
+        return client.delete("$BASE_URL/couples/$userId")
     }
 }
 
