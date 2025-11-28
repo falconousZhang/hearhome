@@ -23,16 +23,35 @@ import com.example.hearhome.data.local.User
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.ui.friend.FriendViewModel
 import com.example.hearhome.ui.friend.FriendViewModelFactory
+import com.example.hearhome.ui.relation.CoupleViewModel
+import com.example.hearhome.ui.relation.CoupleViewModelFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
     val context = LocalContext.current
     val friendViewModel: FriendViewModel = viewModel(factory = FriendViewModelFactory(ApiService))
+    val coupleViewModel: CoupleViewModel = viewModel(factory = CoupleViewModelFactory(ApiService))
     val uiState by friendViewModel.uiState.collectAsState()
+    val coupleState by coupleViewModel.uiState.collectAsState()
 
     var keyword by remember { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
+    
+    // 监听情侣请求的成功/失败消息
+    LaunchedEffect(coupleState.successMessage) {
+        coupleState.successMessage?.let {
+            snackbarHostState.showSnackbar(it)
+            coupleViewModel.clearMessages()
+        }
+    }
+    
+    LaunchedEffect(coupleState.error) {
+        coupleState.error?.let {
+            snackbarHostState.showSnackbar("错误: $it")
+            coupleViewModel.clearMessages()
+        }
+    }
 
     // 当屏幕被销毁时，清除搜索结果
     DisposableEffect(Unit) {
@@ -111,6 +130,9 @@ fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
                                     onAddFriend = {
                                         friendViewModel.sendFriendRequest(currentUserId, uiState.searchedUser!!.uid)
                                         Toast.makeText(context, "好友请求已发送", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onSendCoupleRequest = {
+                                        coupleViewModel.sendCoupleRequest(currentUserId, uiState.searchedUser!!.uid)
                                     }
                                 )
                             }
@@ -128,25 +150,62 @@ fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
 }
 
 @Composable
-private fun UserCard(user: User, onAddFriend: () -> Unit) {
+private fun UserCard(
+    user: User, 
+    onAddFriend: () -> Unit,
+    onSendCoupleRequest: () -> Unit
+) {
     Card(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(Color(user.avatarColor.toColorInt()))
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(user.nickname.ifBlank { "(未设置昵称)" }, style = MaterialTheme.typography.titleMedium)
-                Text("ID: ${user.uid} | 性别: ${user.gender}", style = MaterialTheme.typography.bodyMedium)
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .clip(CircleShape)
+                        .background(Color(user.avatarColor.toColorInt()))
+                )
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        user.nickname.ifBlank { "(未设置昵称)" }, 
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        "ID: ${user.uid} | 性别: ${user.gender}", 
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (user.relationshipStatus == "in_relationship") {
+                        Text(
+                            "已有情侣",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
             }
-            OutlinedButton(onClick = onAddFriend) {
-                Text("加好友")
+            
+            Spacer(Modifier.height(12.dp))
+            
+            // 操作按钮
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onAddFriend,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("加好友")
+                }
+                
+                Button(
+                    onClick = onSendCoupleRequest,
+                    modifier = Modifier.weight(1f),
+                    enabled = user.relationshipStatus != "in_relationship"
+                ) {
+                    Text("发送情侣请求")
+                }
             }
         }
     }
