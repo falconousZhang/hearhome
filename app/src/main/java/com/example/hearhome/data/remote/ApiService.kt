@@ -32,6 +32,46 @@ object ApiService {
             })
         }
     }
+    // ============================ 忘记密码流程 ============================
+
+    /** Step1：获取密保问题 */
+    suspend fun fetchResetQuestion(email: String): HttpResponse =
+        client.post("$BASE_URL/users/reset-question") {
+            contentType(ContentType.Application.Json)
+            setBody(ResetQuestionRequest(email.trim()))
+        }
+
+    /** Step3：提交答案 + 新密码 */
+    suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse =
+        client.post("$BASE_URL/users/reset-password") {
+            contentType(ContentType.Application.Json)
+            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword))
+        }
+
+    // ============================ 个人中心：密码/密保 ============================
+    /** 修改密码 */
+    suspend fun updatePassword(
+        email: String,
+        oldPassword: String,
+        securityAnswer: String,
+        newPassword: String
+    ): HttpResponse =
+        client.post("$BASE_URL/users/update-password") {
+            contentType(ContentType.Application.Json)
+            setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword))
+        }
+
+    /** 设置/修改密保 */
+    suspend fun updateSecurityQuestion(
+        email: String,
+        password: String,
+        question: String,
+        answer: String
+    ): HttpResponse =
+        client.post("$BASE_URL/users/update-security-question") {
+            contentType(ContentType.Application.Json)
+            setBody(UpdateSecurityQuestionRequest(email, password, question, answer))
+        }
 
     suspend fun register(user: User): HttpResponse {
         return client.post("$BASE_URL/users/register") {
@@ -94,7 +134,7 @@ object ApiService {
     }
 
     // ==================== 情侣关系相关 API ====================
-    
+
     /**
      * 获取当前用户的情侣关系（已接受的）
      * @param userId 用户ID
@@ -154,8 +194,4 @@ object ApiService {
     }
 }
 
-@Serializable
-data class LoginRequest(val email: String, val password: String)
 
-@Serializable
-data class GenericResponse(val success: Boolean, val message: String)
