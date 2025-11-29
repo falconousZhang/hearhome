@@ -13,6 +13,7 @@ import io.ktor.http.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
@@ -26,10 +27,12 @@ data class CoupleRequestInfo(
     val requester: User // Using the rich local User model
 )
 
+// MODIFIED: Add successMessage to state
 data class CoupleRequestsUiState(
     val requests: List<CoupleRequestInfo> = emptyList(),
     val isLoading: Boolean = true,
-    val error: String? = null
+    val error: String? = null,
+    val successMessage: String? = null
 )
 
 class CoupleRequestsViewModel(
@@ -46,14 +49,13 @@ class CoupleRequestsViewModel(
 
     fun loadRequests() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+            _uiState.update { it.copy(isLoading = true, error = null) }
             try {
                 val response = apiService.getCoupleRequests(currentUserId)
                 if (response.status == HttpStatusCode.OK) {
                     val remoteRequests = response.body<List<CoupleRequestFromApi>>()
                     val requestInfos = mutableListOf<CoupleRequestInfo>()
 
-                    // Correctly handle suspend function inside a loop
                     for (req in remoteRequests) {
                         try {
                             val userResponse = apiService.getProfile(req.requesterId)
@@ -65,53 +67,59 @@ class CoupleRequestsViewModel(
                             e.printStackTrace() // Log error or skip this request
                         }
                     }
-                    _uiState.value = CoupleRequestsUiState(requests = requestInfos, isLoading = false)
+                    _uiState.update { it.copy(requests = requestInfos, isLoading = false) }
                 } else {
-                    _uiState.value = CoupleRequestsUiState(isLoading = false, error = "Failed to load requests")
+                    _uiState.update { it.copy(isLoading = false, error = "Failed to load requests") }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                _uiState.value = CoupleRequestsUiState(isLoading = false, error = e.message)
+                _uiState.update { it.copy(isLoading = false, error = e.message) }
             }
         }
     }
 
-    fun acceptRequest(requestInfo: CoupleRequestInfo, callback: (Result<Unit>) -> Unit) {
+    // MODIFIED: Simplified signature, removed callback, updates state instead
+    fun acceptRequest(requestId: Int) {
         viewModelScope.launch {
             try {
-                // Backend handles all logic for accepting a request
-                val acceptResponse = apiService.acceptCoupleRequest(requestInfo.requestId)
+                val acceptResponse = apiService.acceptCoupleRequest(requestId)
                 if (acceptResponse.status == HttpStatusCode.OK) {
+                    _uiState.update { it.copy(successMessage = "申请已同意") }
                     loadRequests() // Refresh the list
-                    callback(Result.success(Unit))
                 } else {
                     val errorMsg = try { acceptResponse.body<GenericResponse>().message } catch (e: Exception) { "Failed to accept request." }
                     throw Exception(errorMsg)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                callback(Result.failure(e))
+                _uiState.update { it.copy(error = e.message ?: "同意申请失败") }
             }
         }
     }
 
-    fun rejectRequest(requestId: Int, callback: (Result<Unit>) -> Unit) {
+    // MODIFIED: Simplified signature, removed callback, updates state instead
+    fun rejectRequest(requestId: Int) {
         viewModelScope.launch {
             try {
                 val response = apiService.rejectCoupleRequest(requestId)
                 if (response.status == HttpStatusCode.OK) {
-                    loadRequests()
-                    callback(Result.success(Unit))
+                    _uiState.update { it.copy(successMessage = "申请已拒绝") }
+                    loadRequests() // Refresh the list
                 } else {
                     val errorBody = response.bodyAsText()
                     val error = try { Gson().fromJson(errorBody, GenericResponse::class.java).message } catch(e: Exception) { "Failed to reject request" }
-                    callback(Result.failure(Exception(error)))
+                    throw Exception(error)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                callback(Result.failure(e))
+                 _uiState.update { it.copy(error = e.message ?: "拒绝申请失败") }
             }
         }
+    }
+
+    // NEW: Added method to clear one-time messages
+    fun clearMessages() {
+        _uiState.update { it.copy(successMessage = null, error = null) }
     }
 }
 

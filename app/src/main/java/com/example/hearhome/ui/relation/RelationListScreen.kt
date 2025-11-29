@@ -26,6 +26,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -65,6 +66,7 @@ import com.example.hearhome.ui.components.AppBottomNavigation
 import com.example.hearhome.ui.friend.FriendViewModel
 import com.example.hearhome.ui.friend.FriendViewModelFactory
 import com.example.hearhome.ui.friend.FriendWithRelation
+import androidx.compose.material.icons.filled.HeartBroken
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,12 +76,15 @@ fun RelationListScreen(
 ) {
     val context = LocalContext.current
     val friendViewModel: FriendViewModel = viewModel(factory = FriendViewModelFactory(ApiService))
+    val coupleViewModel: CoupleViewModel = viewModel(factory = CoupleViewModelFactory(ApiService))
     val uiState by friendViewModel.uiState.collectAsState()
+    val coupleState by coupleViewModel.uiState.collectAsState()
     val friends = uiState.friends
     
     val snackbarHostState = remember { SnackbarHostState() }
     
     var friendToDelete by remember { mutableStateOf<FriendWithRelation?>(null) }
+    var showBreakupDialog by remember { mutableStateOf(false) }
 
     // --- Data Refresh ---
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -87,7 +92,8 @@ fun RelationListScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 friendViewModel.getFriends(currentUserId)
-                // TODO: Refresh couple and badge data from network
+                coupleViewModel.getMyCouple(currentUserId)
+                coupleViewModel.getCoupleRequests(currentUserId)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -117,6 +123,28 @@ fun RelationListScreen(
             dismissButton = { TextButton(onClick = { friendToDelete = null }) { Text("取消") } }
         )
     }
+    
+    // 解除情侣关系对话框
+    if (showBreakupDialog) {
+        AlertDialog(
+            onDismissRequest = { showBreakupDialog = false },
+            title = { Text("确认解除情侣关系") },
+            text = { Text("确定要解除情侣关系吗？此操作不可撤销。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        coupleViewModel.breakupCouple(currentUserId)
+                        showBreakupDialog = false
+                        Toast.makeText(context, "已解除情侣关系", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("解除") }
+            },
+            dismissButton = { 
+                TextButton(onClick = { showBreakupDialog = false }) { Text("取消") } 
+            }
+        )
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -126,14 +154,20 @@ fun RelationListScreen(
                 actions = {
                     IconButton(onClick = { navController.navigate("friendRequests/${currentUserId}") }) {
                         BadgedBox(
-                            badge = { /* TODO: Get from network */ }
+                            badge = { 
+                                // 好友请求徽章（暂时不显示数量）
+                            }
                         ) {
                             Icon(Icons.Default.PersonAdd, "好友申请")
                         }
                     }
                     IconButton(onClick = { navController.navigate("coupleRequests/${currentUserId}") }) {
                         BadgedBox(
-                            badge = { /* TODO: Get from network */ }
+                            badge = { 
+                                if (coupleState.requestCount > 0) {
+                                    Badge { Text(coupleState.requestCount.toString()) }
+                                }
+                            }
                         ) {
                             Icon(Icons.Default.Favorite, "情侣申请")
                         }
@@ -144,10 +178,54 @@ fun RelationListScreen(
         bottomBar = { AppBottomNavigation("relation", navController, currentUserId) }
     ) { paddingValues ->
         Column(modifier = Modifier.fillMaxSize().padding(paddingValues).padding(16.dp)) {
-            // --- Couple Section (Not implemented yet) ---
+            // --- Couple Section ---
             Text("我的情侣：", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
-            Text("暂无情侣", style = MaterialTheme.typography.bodyLarge)
+            
+            if (coupleState.myCouple != null) {
+                val partner = coupleState.myCouple!!.partner
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(50.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(partner.avatarColor.toColorInt()))
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = partner.nickname.ifBlank { "(未设置昵称)" },
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Text(
+                                    text = "ID: ${partner.uid}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        IconButton(onClick = { showBreakupDialog = true }) {
+                            Icon(
+                                Icons.Default.HeartBroken, 
+                                contentDescription = "解除关系",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    "暂无情侣", 
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
 

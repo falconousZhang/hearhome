@@ -87,12 +87,7 @@ fun ProfileScreen(
         }
     }
 
-    if (showLogoutDialog) {
-        LogoutConfirmationDialog(
-            onConfirm = { authViewModel.logout(); showLogoutDialog = false },
-            onDismiss = { showLogoutDialog = false }
-        )
-    }
+
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
