@@ -83,6 +83,13 @@ fun SpaceDetailScreen(
     val spaceMembers by spaceViewModel.spaceMembers.collectAsState()
     val scope = rememberCoroutineScope()
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
+    
+    // DEBUG: 打印当前角色（用于调试）
+    LaunchedEffect(currentUserRole) {
+        println("[DEBUG SpaceDetailScreen] currentUserRole=$currentUserRole, isAdmin=$isAdmin")
+        println("[DEBUG SpaceDetailScreen] currentSpace=$currentSpace")
+        println("[DEBUG SpaceDetailScreen] spaceMembers count=${spaceMembers.size}")
+    }
 
     // 纪念日加载与倒计时刷新
     var anniversaries by remember { mutableStateOf(listOf<Anniversary>()) }

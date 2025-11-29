@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import com.example.hearhome.data.local.User
 import com.example.hearhome.data.remote.ApiService
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -28,27 +29,25 @@ fun CoupleRequestsScreen(
     currentUserId: Int
 ) {
     val context = LocalContext.current
-    val coupleViewModel: CoupleViewModel = viewModel(factory = CoupleViewModelFactory(ApiService))
-    val uiState by coupleViewModel.uiState.collectAsState()
-    
-    // 加载待处理请求
-    LaunchedEffect(currentUserId) {
-        coupleViewModel.getCoupleRequests(currentUserId)
-    }
-    
-    // 监听成功消息
-    LaunchedEffect(uiState.successMessage) {
-        uiState.successMessage?.let {
+    // 保留您在 yangtze 分支引入的 ViewModel
+    val viewModel: CoupleRequestsViewModel = viewModel(
+        factory = CoupleRequestsViewModelFactory(ApiService, currentUserId)
+    )
+    val uiState by viewModel.uiState.collectAsState()
+
+    // 采纳“上线测试”分支的方案，使用 LaunchedEffect 处理 Toast 提示，代码更简洁
+    // 注意：您可能需要在 CoupleRequestsViewModel 和其 UiState 中添加 successMessage/error 状态，以及一个 clearMessages 方法
+    uiState.successMessage?.let {
+        LaunchedEffect(it) {
             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
-            coupleViewModel.clearMessages()
+            viewModel.clearMessages()
         }
     }
-    
-    // 监听错误消息
-    LaunchedEffect(uiState.error) {
-        uiState.error?.let {
+
+    uiState.error?.let {
+        LaunchedEffect(it) {
             Toast.makeText(context, "错误: $it", Toast.LENGTH_SHORT).show()
-            coupleViewModel.clearMessages()
+            viewModel.clearMessages()
         }
     }
 
@@ -64,51 +63,38 @@ fun CoupleRequestsScreen(
             )
         }
     ) { innerPadding ->
-        Column(
-            Modifier
+        Box(
+            modifier = Modifier
                 .padding(innerPadding)
-                .padding(16.dp)
                 .fillMaxSize()
         ) {
             when {
                 uiState.isLoading -> {
-                    Box(
-                        contentAlignment = Alignment.Center, 
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        CircularProgressIndicator()
-                    }
+                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                 }
-                uiState.coupleRequests.isEmpty() -> {
-                    Box(
-                        contentAlignment = Alignment.Center, 
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        Text(
-                            "暂无新的情侣申请", 
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                uiState.requests.isEmpty() -> {
+                    Text(
+                        text = "暂无新的情侣申请",
+                        modifier = Modifier.align(Alignment.Center),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 else -> {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(
-                            items = uiState.coupleRequests, 
-                            key = { it.request.id }
-                        ) { requestInfo ->
+                    LazyColumn(
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // 假设您的 uiState.requests 中的对象包含 requestId 和 requester
+                        items(uiState.requests, key = { it.requestId }) { info ->
+                            // 使用“上线测试”分支中更纯粹的无状态 Card 组件
                             CoupleRequestCard(
-                                requester = requestInfo.requester,
+                                requester = info.requester,
                                 onAccept = {
-                                    coupleViewModel.acceptCoupleRequest(
-                                        requestInfo.request.id,
-                                        currentUserId
-                                    )
+                                    // 在此处调用 ViewModel 的方法
+                                    viewModel.acceptRequest(info.requestId)
                                 },
                                 onReject = {
-                                    coupleViewModel.rejectCoupleRequest(
-                                        requestInfo.request.id,
-                                        currentUserId
-                                    )
+                                    viewModel.rejectRequest(info.requestId)
                                 }
                             )
                         }
@@ -121,7 +107,7 @@ fun CoupleRequestsScreen(
 
 @Composable
 private fun CoupleRequestCard(
-    requester: com.example.hearhome.data.local.User,
+    requester: User,
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
@@ -139,12 +125,12 @@ private fun CoupleRequestCard(
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    requester.nickname.ifBlank { "(未设置昵称)" }, 
+                    requester.nickname.ifBlank { "(未设置昵称)" },
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    "ID: ${requester.uid} | 性别: ${requester.gender}", 
-                    style = MaterialTheme.typography.bodySmall, 
+                    "ID: ${requester.uid} | 性别: ${requester.gender}",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -153,14 +139,14 @@ private fun CoupleRequestCard(
                 Button(
                     onClick = onAccept,
                     modifier = Modifier.width(80.dp)
-                ) { 
-                    Text("同意") 
+                ) {
+                    Text("同意")
                 }
                 OutlinedButton(
                     onClick = onReject,
                     modifier = Modifier.width(80.dp)
-                ) { 
-                    Text("拒绝") 
+                ) {
+                    Text("拒绝")
                 }
             }
         }

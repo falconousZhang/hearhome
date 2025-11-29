@@ -97,5 +97,5 @@ dependencies {
     implementation("com.sun.mail:android-activation:1.6.7")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
-
+    implementation("com.google.code.gson:gson:2.8.9")
 }

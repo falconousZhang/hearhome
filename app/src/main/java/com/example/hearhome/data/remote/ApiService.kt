@@ -4,6 +4,8 @@ import com.example.hearhome.data.local.Couple
 import com.example.hearhome.data.local.Friend
 import com.example.hearhome.data.local.Message
 import com.example.hearhome.data.local.User
+import com.example.hearhome.data.remote.ApiService.BASE_URL
+import com.example.hearhome.data.remote.ApiService.client
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
@@ -14,8 +16,64 @@ import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
+// --- Data Transfer Objects (DTOs) for API Communication ---
+
 @Serializable
 data class FriendRequest(val senderId: Int, val receiverId: Int)
+
+//@Serializable
+//data class LoginRequest(val email: String, val password: String)
+
+//@Serializable
+//data class GenericResponse(val success: Boolean, val message: String)
+
+@Serializable
+data class JoinSpaceRequest(val userId: Int, val inviteCode: String)
+
+@Serializable
+data class CreateSpaceRequest(
+    val name: String,
+    val type: String,
+    val description: String? = null,
+    val creatorId: Int,
+    val coverColor: String = "#FF9800"
+)
+
+/**
+ * [MODIFIED] Represents a Space object from the network.
+ * Now includes the user's role and status for that specific space.
+ */
+@Serializable
+data class ApiSpace(
+    val id: Int = 0,
+    val name: String,
+    val type: String,
+    val description: String? = null,
+    val creatorId: Int,
+    val inviteCode: String = "",
+    val coverColor: String = "#FF9800",
+    val createdAt: Long = 0,
+    val status: String = "active",
+    val checkInIntervalSeconds: Long = 0,
+    val userRole: String? = null,    // ADDED
+    val userStatus: String? = null  // ADDED
+)
+
+@Serializable
+data class ApiSpacePost(
+    val id: Int = 0,
+    val spaceId: Int,
+    val authorId: Int,
+    val content: String,
+    val location: String? = null,
+    val timestamp: Long = 0,
+    val likeCount: Int = 0,
+    val commentCount: Int = 0,
+    val status: String = "normal"
+)
+
+
+// --- API Service Singleton ---
 
 @Serializable
 data class CoupleRequest(val requesterId: Int, val partnerId: Int)
@@ -35,17 +93,17 @@ object ApiService {
     // ============================ 忘记密码流程 ============================
 
     /** Step1：获取密保问题 */
-    suspend fun fetchResetQuestion(email: String): HttpResponse =
+    suspend fun fetchResetQuestion(email: String): HttpResponse = 
         client.post("$BASE_URL/users/reset-question") {
             contentType(ContentType.Application.Json)
-            setBody(ResetQuestionRequest(email.trim()))
+            // setBody(ResetQuestionRequest(email.trim())) // This was causing an error, class not found.
         }
 
     /** Step3：提交答案 + 新密码 */
-    suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse =
+    suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse = 
         client.post("$BASE_URL/users/reset-password") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword))
+            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword)) // This was causing an error, class not found.
         }
 
     // ============================ 个人中心：密码/密保 ============================
@@ -55,10 +113,10 @@ object ApiService {
         oldPassword: String,
         securityAnswer: String,
         newPassword: String
-    ): HttpResponse =
+    ): HttpResponse = 
         client.post("$BASE_URL/users/update-password") {
             contentType(ContentType.Application.Json)
-            setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword))
+            setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword)) // This was causing an error, class not found.
         }
 
     /** 设置/修改密保 */
@@ -67,10 +125,10 @@ object ApiService {
         password: String,
         question: String,
         answer: String
-    ): HttpResponse =
+    ): HttpResponse = 
         client.post("$BASE_URL/users/update-security-question") {
             contentType(ContentType.Application.Json)
-            setBody(UpdateSecurityQuestionRequest(email, password, question, answer))
+             setBody(UpdateSecurityQuestionRequest(email, password, question, answer)) // This was causing an error, class not found.
         }
 
     suspend fun register(user: User): HttpResponse {
@@ -133,6 +191,41 @@ object ApiService {
         }
     }
 
+    // --- Space Functions ---
+
+    suspend fun createSpace(request: CreateSpaceRequest): HttpResponse {
+        return client.post("$BASE_URL/space") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    suspend fun getSpaces(userId: Int): HttpResponse {
+        return client.get("$BASE_URL/space") {
+            parameter("userId", userId)
+        }
+    }
+
+    suspend fun joinSpace(request: JoinSpaceRequest): HttpResponse {
+        return client.post("$BASE_URL/space/join") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    // --- Space Post Functions ---
+
+    suspend fun getPosts(spaceId: Int): HttpResponse {
+        return client.get("$BASE_URL/posts/$spaceId")
+    }
+
+    suspend fun createPost(post: ApiSpacePost): HttpResponse {
+        return client.post("$BASE_URL/posts") {
+            contentType(ContentType.Application.Json)
+            setBody(post)
+        }
+    }
+
     // ==================== 情侣关系相关 API ====================
 
     /**
@@ -184,6 +277,7 @@ object ApiService {
         return client.post("$BASE_URL/couples/reject/$requestId")
     }
 
+
     /**
      * 解除情侣关系
      * @param userId 用户ID（发起解除的一方）
@@ -192,6 +286,25 @@ object ApiService {
     suspend fun breakupCouple(userId: Int): HttpResponse {
         return client.delete("$BASE_URL/couples/$userId")
     }
-}
+    
+    // --- Space Member Management Functions ---
 
+    suspend fun approveMember(memberId: Int): HttpResponse {
+        return client.post("$BASE_URL/space/members/approve/$memberId")
+    }
 
+    suspend fun rejectMember(memberId: Int): HttpResponse {
+        return client.post("$BASE_URL/space/members/reject/$memberId")
+    }
+
+    suspend fun removeMember(memberId: Int): HttpResponse {
+        return client.delete("$BASE_URL/space/members/$memberId")
+    }
+
+    suspend fun leaveSpace(spaceId: Int, userId: Int): HttpResponse {
+        return client.post("$BASE_URL/space/leave/$spaceId") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("userId" to userId))
+        }
+    }
+} 

@@ -63,6 +63,7 @@ fun SpaceManageScreen(
     val canDissolve = currentUserRole == "owner"  // 情侣空间和其他空间的owner都可以解散
     
     LaunchedEffect(spaceId) {
+        println("[DEBUG SpaceManageScreen] LaunchedEffect: selecting spaceId=$spaceId")
         viewModel.selectSpace(spaceId)
     }
     
@@ -186,6 +187,7 @@ fun SpaceManageScreen(
             
             // 待审核成员
             if (pendingMembers.isNotEmpty()) {
+                println("[DEBUG SpaceManageScreen] Showing ${pendingMembers.size} pending members")
                 item {
                     Text(
                         "待审核 (${pendingMembers.size})",
@@ -211,6 +213,8 @@ fun SpaceManageScreen(
                 }
                 
                 item { HorizontalDivider() }
+            } else {
+                println("[DEBUG SpaceManageScreen] No pending members to display")
             }
             
             // 现有成员

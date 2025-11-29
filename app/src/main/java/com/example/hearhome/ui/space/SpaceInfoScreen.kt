@@ -17,6 +17,9 @@ import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.data.local.Space
 import com.example.hearhome.data.local.SpaceMember
 import com.example.hearhome.data.local.User
+import com.example.hearhome.data.remote.ApiService
+import io.ktor.client.call.*
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.launch
 
 /**
@@ -45,14 +48,47 @@ fun SpaceInfoScreen(
             try {
                 // 获取空间信息
                 space = db.spaceDao().getSpaceById(spaceId)
+                println("[DEBUG SpaceInfoScreen] Space: $space")
+                
                 // 获取成员列表
                 members = db.spaceDao().getSpaceMembers(spaceId)
+                println("[DEBUG SpaceInfoScreen] Members from DB: $members (count: ${members.size})")
+                
                 // 获取所有成员的用户信息
                 val userIds = members.map { it.userId }
-                val userList = userIds.mapNotNull { userId ->
-                    db.userDao().getUserById(userId)
+                println("[DEBUG SpaceInfoScreen] User IDs to fetch: $userIds")
+                
+                val userList = mutableListOf<User>()
+                for (userId in userIds) {
+                    var user = db.userDao().getUserById(userId)
+                    println("[DEBUG SpaceInfoScreen] Fetched user for ID $userId from local DB: $user")
+                    
+                    // 如果本地数据库中没有用户信息，从后端获取
+                    if (user == null) {
+                        try {
+                            val response = ApiService.getProfile(userId)
+                            if (response.status == HttpStatusCode.OK) {
+                                user = response.body<User>()
+                                println("[DEBUG SpaceInfoScreen] Fetched user for ID $userId from API: $user")
+                                // 保存到本地数据库，以便下次使用
+                                if (user != null) {
+                                    db.userDao().insert(user)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            println("[ERROR SpaceInfoScreen] Failed to fetch user $userId from API: ${e.message}")
+                        }
+                    }
+                    
+                    if (user != null) {
+                        userList.add(user)
+                    }
                 }
                 users = userList.associateBy { it.uid }
+                println("[DEBUG SpaceInfoScreen] Final users map: $users")
+            } catch (e: Exception) {
+                println("[ERROR SpaceInfoScreen] Exception: ${e.message}")
+                e.printStackTrace()
             } finally {
                 isLoading = false
             }
