@@ -1,34 +1,37 @@
+@file:OptIn(kotlinx.serialization.InternalSerializationApi::class)
 package com.example.hearhome.data.remote
 
+import android.annotation.SuppressLint
 import com.example.hearhome.data.local.Couple
 import com.example.hearhome.data.local.Friend
 import com.example.hearhome.data.local.Message
 import com.example.hearhome.data.local.User
-import com.example.hearhome.data.remote.ApiService.BASE_URL
-import com.example.hearhome.data.remote.ApiService.client
-import io.ktor.client.*
-import io.ktor.client.engine.cio.*
-import io.ktor.client.plugins.contentnegotiation.*
-import io.ktor.client.request.*
-import io.ktor.client.statement.*
-import io.ktor.http.*
-import io.ktor.serialization.kotlinx.json.*
+import io.ktor.client.* 
+import io.ktor.client.engine.cio.* 
+import io.ktor.client.plugins.contentnegotiation.* 
+import io.ktor.client.request.* 
+import io.ktor.client.request.forms.formData
+import io.ktor.client.request.forms.submitFormWithBinaryData
+import io.ktor.client.statement.* 
+import io.ktor.http.* 
+import io.ktor.serialization.kotlinx.json.* 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 // --- Data Transfer Objects (DTOs) for API Communication ---
+// DTOs like LoginRequest, GenericResponse, etc., are defined in other files within this package
+// and have been removed from here to resolve redeclaration errors.
 
+@SuppressLint("UnsafeOptInUsageError")
 @Serializable
 data class FriendRequest(val senderId: Int, val receiverId: Int)
 
-//@Serializable
-//data class LoginRequest(val email: String, val password: String)
-
-//@Serializable
-//data class GenericResponse(val success: Boolean, val message: String)
-
 @Serializable
-data class JoinSpaceRequest(val userId: Int, val inviteCode: String)
+data class JoinSpaceRequest(
+    val userId: Int, 
+    val inviteCode: String, 
+    val nickname: String? = null // MODIFIED: Added nickname based on server code
+)
 
 @Serializable
 data class CreateSpaceRequest(
@@ -65,12 +68,25 @@ data class ApiSpacePost(
     val spaceId: Int,
     val authorId: Int,
     val content: String,
+    val images: String? = null, // Field for images, usually a JSON array of URLs
     val location: String? = null,
     val timestamp: Long = 0,
     val likeCount: Int = 0,
     val commentCount: Int = 0,
     val status: String = "normal"
 )
+
+@Serializable
+data class ApiMessage(
+    val id: Int = 0,
+    val senderId: Int,
+    val receiverId: Int,
+    val content: String? = null,
+    val imageUrl: String? = null,
+    val timestamp: Long = 0,
+    val isRead: Boolean = false   // ← 必须添加
+)
+
 
 
 // --- API Service Singleton ---
@@ -90,20 +106,40 @@ object ApiService {
             })
         }
     }
+
+    /**
+     * NEW: Uploads an image to the server.
+     * @param fileName The name of the file.
+     * @param fileBytes The raw byte data of the image.
+     * @return The server's response, which should contain the imageUrl.
+     */
+    suspend fun uploadImage(imageBytes: ByteArray, fileName: String): HttpResponse {
+        return client.submitFormWithBinaryData(
+            url = "$BASE_URL/upload/image",
+            formData = formData {
+                append("image", imageBytes, Headers.build {
+                    append(HttpHeaders.ContentType, "image/jpeg")
+                    append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
+                })
+            }
+        )
+    }
+
+
     // ============================ 忘记密码流程 ============================
 
     /** Step1：获取密保问题 */
     suspend fun fetchResetQuestion(email: String): HttpResponse = 
         client.post("$BASE_URL/users/reset-question") {
             contentType(ContentType.Application.Json)
-            // setBody(ResetQuestionRequest(email.trim())) // This was causing an error, class not found.
+            setBody(ResetQuestionRequest(email.trim()))
         }
 
     /** Step3：提交答案 + 新密码 */
     suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse = 
         client.post("$BASE_URL/users/reset-password") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword)) // This was causing an error, class not found.
+            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword))
         }
 
     // ============================ 个人中心：密码/密保 ============================
@@ -116,7 +152,7 @@ object ApiService {
     ): HttpResponse = 
         client.post("$BASE_URL/users/update-password") {
             contentType(ContentType.Application.Json)
-            setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword)) // This was causing an error, class not found.
+            setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword))
         }
 
     /** 设置/修改密保 */
@@ -128,7 +164,7 @@ object ApiService {
     ): HttpResponse = 
         client.post("$BASE_URL/users/update-security-question") {
             contentType(ContentType.Application.Json)
-             setBody(UpdateSecurityQuestionRequest(email, password, question, answer)) // This was causing an error, class not found.
+             setBody(UpdateSecurityQuestionRequest(email, password, question, answer))
         }
 
     suspend fun register(user: User): HttpResponse {
@@ -184,7 +220,7 @@ object ApiService {
         return client.get("$BASE_URL/messages/$userId1/$userId2")
     }
 
-    suspend fun sendMessage(message: Message): HttpResponse {
+    suspend fun sendMessage(message: ApiMessage): HttpResponse {
         return client.post("$BASE_URL/messages") {
             contentType(ContentType.Application.Json)
             setBody(message)
@@ -307,4 +343,4 @@ object ApiService {
             setBody(mapOf("userId" to userId))
         }
     }
-} 
+}

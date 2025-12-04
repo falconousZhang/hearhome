@@ -1,10 +1,15 @@
 package com.example.hearhome.ui.chat
 
+import android.annotation.SuppressLint
+import android.app.Application
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.local.Message
 import com.example.hearhome.data.local.User
+import com.example.hearhome.data.remote.ApiMessage
 import com.example.hearhome.data.remote.ApiService
 import io.ktor.client.call.*
 import io.ktor.http.*
@@ -14,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
 
 data class ChatScreenState(
     val messages: List<Message> = emptyList(),
@@ -21,8 +27,15 @@ data class ChatScreenState(
     val isLoading: Boolean = false,
     val error: String? = null
 )
-//21212121
-class ChatViewModel(private val apiService: ApiService) : ViewModel() {
+
+@SuppressLint("UnsafeOptInUsageError")
+@Serializable
+data class ImageUploadResponse(val imageUrl: String)
+
+class ChatViewModel(
+    private val apiService: ApiService,
+    application: Application
+) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(ChatScreenState())
     val uiState: StateFlow<ChatScreenState> = _uiState
@@ -44,8 +57,8 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message, isLoading = false)
             }
-            
-            while(isActive) {
+
+            while (isActive) {
                 delay(3000)
                 try {
                     val pollResponse = apiService.getMessages(userId1, userId2)
@@ -55,13 +68,13 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
                             _uiState.value = _uiState.value.copy(messages = messages)
                         }
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // Do not show an error for every failed poll
                 }
             }
         }
     }
-    
+
     fun loadFriendDetails(friendId: Int) {
         viewModelScope.launch {
             try {
@@ -76,28 +89,50 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
         }
     }
 
-    fun sendMessage(senderId: Int, receiverId: Int, content: String) {
+    fun sendMessage(senderId: Int, receiverId: Int, content: String?, imageUri: Uri?) {
         viewModelScope.launch {
-            if (content.isBlank()) return@launch
-            
-            val message = Message(
+
+            // ① 文本和图片都为空就不发
+            if (content.isNullOrBlank() && imageUri == null) return@launch
+
+            var uploadedImageUrl: String? = null
+
+            // ② 如果有图片 URI，先上传图片
+            if (imageUri != null) {
+                try {
+                    // 将 Uri 转换为 ByteArray
+                    val inputStream = getApplication<Application>().contentResolver.openInputStream(imageUri)
+                    val imageBytes = inputStream?.readBytes()
+
+                    if (imageBytes != null) {
+                        val response = apiService.uploadImage(imageBytes, "image.jpg")
+                        if(response.status == HttpStatusCode.OK) {
+                            val responseBody = response.body<ImageUploadResponse>()
+                            uploadedImageUrl = responseBody.imageUrl
+                        }
+                    }
+                } catch (e: Exception) {
+                    _uiState.value = _uiState.value.copy(error = "Image upload failed: ${e.message}")
+                }
+            }
+
+            // ③ 组织消息内容
+            val apiMessage = ApiMessage(
                 senderId = senderId,
                 receiverId = receiverId,
-                content = content,
-                timestamp = System.currentTimeMillis(),
-                isRead = false
+                content = if (uploadedImageUrl == null) content else null,  // 图片消息不发文字
+                imageUrl = uploadedImageUrl,
+                timestamp = System.currentTimeMillis()
             )
 
+            // ④ 调用发送消息接口
             try {
-                val response = apiService.sendMessage(message)
+                val response = apiService.sendMessage(apiMessage)
                 if (response.status == HttpStatusCode.Created) {
                     val refreshResponse = apiService.getMessages(senderId, receiverId)
                     if (refreshResponse.status == HttpStatusCode.OK) {
-                         val refreshedMessages = refreshResponse.body<List<Message>>()
-                        _uiState.value = _uiState.value.copy(messages = refreshedMessages)
+                        _uiState.value = _uiState.value.copy(messages = refreshResponse.body())
                     }
-                } else {
-                     _uiState.value = _uiState.value.copy(error = "Failed to send message")
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message)
@@ -106,11 +141,14 @@ class ChatViewModel(private val apiService: ApiService) : ViewModel() {
     }
 }
 
-class ChatViewModelFactory(private val apiService: ApiService) : ViewModelProvider.Factory {
+class ChatViewModelFactory(
+    private val apiService: ApiService,
+    private val application: Application
+) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ChatViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return ChatViewModel(apiService) as T
+            return ChatViewModel(apiService, application) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")
     }

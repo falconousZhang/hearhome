@@ -18,6 +18,7 @@ class AuthViewModel(
 
     sealed class AuthState {
         object Idle : AuthState()
+        object LoggedOut : AuthState() // ADDED: State for logged out
         object AwaitingInput : AuthState()
         object Loading : AuthState()
         data class Success(val user: User) : AuthState()
@@ -41,6 +42,14 @@ class AuthViewModel(
 
     /** =====（如果 UI 用到）ProfileScreen 消费完事件后回到可交互状态 ===== */
     fun onProfileEventConsumed() { _authState.value = AuthState.AwaitingInput }
+
+    /** ===== 登出 ===== */
+    fun logout() {
+        viewModelScope.launch {
+            // In a real app, you would clear tokens from SharedPreferences/DataStore here
+            _authState.value = AuthState.LoggedOut
+        }
+    }
 
     /** ===== 登录（走后端） ===== */
     fun login(email: String, password: String) {
