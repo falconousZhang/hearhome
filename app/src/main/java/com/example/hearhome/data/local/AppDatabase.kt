@@ -12,6 +12,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  * 管理用户表、好友表、情侣表、消息表以及空间相关表
  * v13：空间表新增 checkInIntervalSeconds 字段（打卡间隔）
  *      + 新增 post_mentions 表（动态提醒功能）
+ * v14: 新增图片消息功能
+ *      - `messages` 表新增 `imageUrl` 字段，`content` 改为可空
  */
 @Database(
     entities = [
@@ -29,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Anniversary::class, // v12 新增
         PostMention::class  // v13 新增
     ],
-    version = 13,
+    version = 14,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -277,6 +279,18 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // 13 -> 14: Add imageUrl to messages, making content nullable
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // SQLite doesn't directly support making a column nullable or adding a nullable column with a default.
+                // The standard, safe way is to create a new table and copy the data.
+                db.execSQL("CREATE TABLE `messages_new` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `senderId` INTEGER NOT NULL, `receiverId` INTEGER NOT NULL, `content` TEXT, `imageUrl` TEXT, `timestamp` INTEGER NOT NULL, `isRead` INTEGER NOT NULL DEFAULT 0)")
+                db.execSQL("INSERT INTO `messages_new` (id, senderId, receiverId, content, timestamp, isRead) SELECT id, senderId, receiverId, content, timestamp, isRead FROM messages")
+                db.execSQL("DROP TABLE messages")
+                db.execSQL("ALTER TABLE `messages_new` RENAME TO messages")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -296,7 +310,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_9_10,
                         MIGRATION_10_11,
                         MIGRATION_11_12,
-                        MIGRATION_12_13
+                        MIGRATION_12_13,
+                        MIGRATION_13_14
                     )
                     .fallbackToDestructiveMigration()
                     // 如需强制清库调试可打开：.fallbackToDestructiveMigration()

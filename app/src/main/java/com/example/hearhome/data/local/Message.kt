@@ -11,7 +11,8 @@ data class Message(
     val id: Int = 0,
     val senderId: Int,
     val receiverId: Int,
-    val content: String,
+    val content: String? = null,
+    val imageUrl: String? = null,
     val timestamp: Long,
     val isRead: Boolean = false
 )
