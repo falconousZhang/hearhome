@@ -17,6 +17,8 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.* 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import io.ktor.client.call.body
+import com.example.hearhome.data.local.Space
 
 // --- Data Transfer Objects (DTOs) for API Communication ---
 // DTOs like LoginRequest, GenericResponse, etc., are defined in other files within this package
@@ -39,6 +41,7 @@ data class CreateSpaceRequest(
     val type: String,
     val description: String? = null,
     val creatorId: Int,
+    val partnerId: Int? = null,
     val coverColor: String = "#FF9800"
 )
 
@@ -87,6 +90,21 @@ data class ApiMessage(
     val isRead: Boolean = false   // ← 必须添加
 )
 
+/**
+ * PostMention 的网络传输版本
+ */
+@Serializable
+data class PostMention(
+    val id: Int = 0,
+    val postId: Int,
+    val mentionedUserId: Int,
+    val mentionerUserId: Int,
+    val timeoutSeconds: Long,
+    val createdAt: Long = System.currentTimeMillis(),
+    val viewedAt: Long? = null,
+    val lastNotifiedAt: Long? = null,
+    val status: String = "pending"
+)
 
 
 // --- API Service Singleton ---
@@ -95,7 +113,7 @@ data class ApiMessage(
 data class CoupleRequest(val requesterId: Int, val partnerId: Int)
 
 object ApiService {
-    private const val BASE_URL = "http://121.37.136.244:8080"
+    private const val BASE_URL = "http://10.0.2.2:8080"
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
@@ -342,5 +360,133 @@ object ApiService {
             contentType(ContentType.Application.Json)
             setBody(mapOf("userId" to userId))
         }
+    }
+
+    // --- Post Mention (@提醒) Functions ---
+
+    /**
+     * 创建@提醒（批量）
+     * @param postId 动态ID
+     * @param mentionedUserIds 被提醒的用户ID列表
+     * @param mentionerUserId 发起提醒的用户ID
+     * @param timeoutSeconds 超时时间（秒）
+     * @return 创建的提醒列表
+     */
+    suspend fun createMentions(
+        postId: Int,
+        mentionedUserIds: List<Int>,
+        mentionerUserId: Int,
+        timeoutSeconds: Long
+    ): List<PostMention> {
+        return client.post("$BASE_URL/mentions") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf(
+                "postId" to postId,
+                "mentionedUserIds" to mentionedUserIds,
+                "mentionerUserId" to mentionerUserId,
+                "timeoutSeconds" to timeoutSeconds
+            ))
+        }.body()
+    }
+
+    /**
+     * 获取用户收到的所有提醒
+     */
+    suspend fun getUserMentions(userId: Int): List<PostMention> {
+        return client.get("$BASE_URL/mentions/user/$userId").body()
+    }
+
+    /**
+     * 获取用户的待处理提醒
+     */
+    suspend fun getUserPendingMentions(userId: Int): List<PostMention> {
+        return client.get("$BASE_URL/mentions/user/$userId/pending").body()
+    }
+
+    /**
+     * 获取动态的所有提醒
+     */
+    suspend fun getPostMentions(postId: Int): List<PostMention> {
+        return client.get("$BASE_URL/mentions/post/$postId").body()
+    }
+
+    /**
+     * 标记提醒为已读
+     */
+    suspend fun markMentionViewed(mentionId: Int): HttpResponse {
+        return client.post("$BASE_URL/mentions/$mentionId/viewed")
+    }
+
+    /**
+     * 标记提醒为忽略
+     */
+    suspend fun markMentionIgnored(mentionId: Int): HttpResponse {
+        return client.post("$BASE_URL/mentions/$mentionId/ignored")
+    }
+
+    /**
+     * 标记提醒为超时
+     */
+    suspend fun markMentionExpired(mentionId: Int): HttpResponse {
+        return client.post("$BASE_URL/mentions/$mentionId/expired")
+    }
+
+    /**
+     * 更新提醒的超时时间
+     */
+    suspend fun updateMentionTimeout(mentionId: Int, timeoutSeconds: Long): PostMention {
+        return client.put("$BASE_URL/mentions/$mentionId/timeout") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("timeoutSeconds" to timeoutSeconds))
+        }.body()
+    }
+
+    /**
+     * 删除提醒
+     */
+    suspend fun deleteMention(mentionId: Int): HttpResponse {
+        return client.delete("$BASE_URL/mentions/$mentionId")
+    }
+
+    /**
+     * 获取用户在指定空间的未读提醒数量
+     */
+    suspend fun getUserSpaceMentionCount(userId: Int, spaceId: Int): Int {
+        val response: Map<String, Int> = client.get("$BASE_URL/mentions/user/$userId/space/$spaceId/count").body()
+        return response["count"] ?: 0
+    }
+
+    /**
+     * 更新最后通知时间
+     */
+    suspend fun updateMentionNotified(mentionId: Int): HttpResponse {
+        return client.post("$BASE_URL/mentions/$mentionId/notified")
+    }
+
+    // --- Space Check-In Interval Functions ---
+
+    /**
+     * 更新空间的打卡间隔时间
+     */
+    suspend fun updateSpaceCheckInInterval(spaceId: Int, checkInIntervalSeconds: Long): HttpResponse {
+        return client.put("$BASE_URL/space/$spaceId/checkin-interval") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("checkInIntervalSeconds" to checkInIntervalSeconds))
+        }
+    }
+
+    /**
+     * 获取空间的打卡间隔时间
+     */
+    suspend fun getSpaceCheckInInterval(spaceId: Int): Long {
+        val response: Map<String, Long> = client.get("$BASE_URL/space/$spaceId/checkin-interval").body()
+        return response["checkInIntervalSeconds"] ?: 0L
+    }
+
+    /**
+     * 获取空间详情（包含打卡间隔）
+     */
+    suspend fun getSpaceById(spaceId: Int): Space {
+        return client.get("$BASE_URL/space/$spaceId").body()
     }
 }

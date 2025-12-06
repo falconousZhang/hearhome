@@ -51,27 +51,35 @@ class CoupleRequestsViewModel(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, error = null) }
             try {
+                println("[DEBUG CoupleRequestsViewModel] loadRequests: fetching for userId=$currentUserId")
                 val response = apiService.getCoupleRequests(currentUserId)
+                println("[DEBUG CoupleRequestsViewModel] loadRequests response status: ${response.status}")
                 if (response.status == HttpStatusCode.OK) {
                     val remoteRequests = response.body<List<CoupleRequestFromApi>>()
+                    println("[DEBUG CoupleRequestsViewModel] loadRequests: received ${remoteRequests.size} requests")
                     val requestInfos = mutableListOf<CoupleRequestInfo>()
 
                     for (req in remoteRequests) {
                         try {
+                            println("[DEBUG CoupleRequestsViewModel] loadRequests: fetching requester profile for uid=${req.requesterId}")
                             val userResponse = apiService.getProfile(req.requesterId)
                             if (userResponse.status == HttpStatusCode.OK) {
                                 val user = userResponse.body<User>()
                                 requestInfos.add(CoupleRequestInfo(requestId = req.id, requester = user))
                             }
                         } catch(e: Exception) {
-                            e.printStackTrace() // Log error or skip this request
+                            println("[ERROR CoupleRequestsViewModel] loadRequests: failed to fetch requester profile: ${e.message}")
+                            e.printStackTrace()
                         }
                     }
+                    println("[DEBUG CoupleRequestsViewModel] loadRequests: processed ${requestInfos.size} requests")
                     _uiState.update { it.copy(requests = requestInfos, isLoading = false) }
                 } else {
+                    println("[ERROR CoupleRequestsViewModel] loadRequests: server returned ${response.status}")
                     _uiState.update { it.copy(isLoading = false, error = "Failed to load requests") }
                 }
             } catch (e: Exception) {
+                println("[ERROR CoupleRequestsViewModel] loadRequests exception: ${e.message}")
                 e.printStackTrace()
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
             }

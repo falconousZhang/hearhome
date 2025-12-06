@@ -57,4 +57,11 @@ interface PostFavoriteDao {
      */
     @Query("SELECT postId FROM post_favorites WHERE userId = :userId ORDER BY timestamp DESC")
     fun getUserFavoritePostIds(userId: Int): Flow<List<Int>>
+
+    /**
+     * 响应式监听用户的收藏状态（用于触发UI更新）
+     * 返回用户收藏的所有动态ID的Set
+     */
+    @Query("SELECT postId FROM post_favorites WHERE userId = :userId")
+    fun observeUserFavoritedPostIds(userId: Int): Flow<List<Int>>
 }

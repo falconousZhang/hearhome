@@ -1,5 +1,6 @@
 # IDE files
 .idea/
+.kotlin
 *.iml
 
 # Build files
@@ -34,3 +35,6 @@ captures/
 
 # 忽略本地个人配置文件
 /.local/
+
+# 数据文件
+/data/

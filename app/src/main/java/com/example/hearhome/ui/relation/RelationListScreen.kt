@@ -67,6 +67,7 @@ import com.example.hearhome.ui.friend.FriendViewModel
 import com.example.hearhome.ui.friend.FriendViewModelFactory
 import com.example.hearhome.ui.friend.FriendWithRelation
 import androidx.compose.material.icons.filled.HeartBroken
+import androidx.compose.material.icons.filled.FavoriteBorder
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,9 +83,10 @@ fun RelationListScreen(
     val friends = uiState.friends
     
     val snackbarHostState = remember { SnackbarHostState() }
-    
+
     var friendToDelete by remember { mutableStateOf<FriendWithRelation?>(null) }
     var showBreakupDialog by remember { mutableStateOf(false) }
+    var friendToSendCoupleRequest by remember { mutableStateOf<FriendWithRelation?>(null) }
 
     // --- Data Refresh ---
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -102,6 +104,21 @@ fun RelationListScreen(
 
     LaunchedEffect(uiState.error) {
         uiState.error?.let { Toast.makeText(context, "Error: $it", Toast.LENGTH_SHORT).show() }
+    }
+
+    // 监听情侣请求的成功/失败消息
+    LaunchedEffect(coupleState.successMessage) {
+        coupleState.successMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+            coupleViewModel.clearMessages()
+        }
+    }
+
+    LaunchedEffect(coupleState.error) {
+        coupleState.error?.let {
+            Toast.makeText(context, "错误: $it", Toast.LENGTH_SHORT).show()
+            coupleViewModel.clearMessages()
+        }
     }
 
     // --- Dialogs ---
@@ -140,8 +157,28 @@ fun RelationListScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) { Text("解除") }
             },
-            dismissButton = { 
-                TextButton(onClick = { showBreakupDialog = false }) { Text("取消") } 
+            dismissButton = {
+                TextButton(onClick = { showBreakupDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    // 发送情侣请求对话框
+    friendToSendCoupleRequest?.let { friendInfo ->
+        AlertDialog(
+            onDismissRequest = { friendToSendCoupleRequest = null },
+            title = { Text("发送情侣请求") },
+            text = { Text("确定要向 ${friendInfo.user.nickname.ifBlank { "用户${friendInfo.user.uid}" }} 发送情侣请求吗？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        coupleViewModel.sendCoupleRequest(currentUserId, friendInfo.user.uid)
+                        friendToSendCoupleRequest = null
+                    }
+                ) { Text("发送") }
+            },
+            dismissButton = {
+                TextButton(onClick = { friendToSendCoupleRequest = null }) { Text("取消") }
             }
         )
     }
@@ -266,6 +303,23 @@ fun RelationListScreen(
                                     expanded = showMenu,
                                     onDismissRequest = { showMenu = false }
                                 ) {
+                                    // 只有当前用户没有情侣时，才显示发送情侣请求选项
+                                    if (coupleState.myCouple == null) {
+                                        DropdownMenuItem(
+                                            text = { Text("发送情侣请求") },
+                                            onClick = {
+                                                friendToSendCoupleRequest = friendInfo
+                                                showMenu = false
+                                            },
+                                            leadingIcon = {
+                                                Icon(
+                                                    Icons.Default.FavoriteBorder,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        )
+                                    }
                                     DropdownMenuItem(
                                         text = { Text("修改备注 (暂未实现)") },
                                         onClick = { showMenu = false },

@@ -9,8 +9,14 @@ import androidx.room.PrimaryKey
  * 
  * 业务逻辑：
  * 1. 发布动态时，发布者可以选择提醒特定用户查看
- * 2. 被提醒用户打开动态详情时，自动记录查看时间
- * 3. 如果超过设定时间未查看，系统弹窗提醒
+ * 2. 被提醒用户可以选择"已读"（接受打卡）或"忽略"（拒绝打卡）
+ * 3. 如果超过设定时间未响应，系统弹窗提醒
+ * 
+ * 状态说明：
+ * - pending: 待响应，用户尚未操作
+ * - viewed: 已读，用户选择了"已读"表示接受打卡
+ * - ignored: 忽略，用户选择了"忽略"表示拒绝打卡
+ * - expired: 已超时，用户在规定时间内未响应
  */
 @Entity(tableName = "post_mentions")
 data class PostMention(
@@ -32,12 +38,12 @@ data class PostMention(
     // 提醒创建时间
     val createdAt: Long = System.currentTimeMillis(),
     
-    // 查看时间（null表示未查看）
+    // 响应时间（null表示未响应）
     val viewedAt: Long? = null,
     
     // 最后一次弹窗提醒的时间（null表示未提醒过）
     val lastNotifiedAt: Long? = null,
     
-    // 提醒状态：pending(待查看), viewed(已查看), expired(已超时未查看)
+    // 提醒状态：pending(待响应), viewed(已读/接受), ignored(忽略/拒绝), expired(已超时未响应)
     val status: String = "pending"
 )

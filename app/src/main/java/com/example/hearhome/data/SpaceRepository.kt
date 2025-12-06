@@ -45,7 +45,20 @@ class SpaceRepository(private val spaceDao: SpaceDao) {
                 println("[DEBUG] SpaceRepository: Found pending memberships in spaces: $pendingMemberships")
 
                 // 2. Separate the received data into two lists: spaces and memberships.
-                val localSpaces = apiSpaces.map { it.toLocalSpace() }
+                // PROTECTION 3: Preserve local checkInIntervalSeconds (not synced from server yet)
+                val localSpaces = apiSpaces.map { apiSpace ->
+                    val baseSpace = apiSpace.toLocalSpace()
+                    
+                    // Check if there's an existing local space with checkInIntervalSeconds
+                    val existingSpace = spaceDao.getSpaceById(apiSpace.id)
+                    if (existingSpace != null && existingSpace.checkInIntervalSeconds > 0) {
+                        println("[DEBUG] SpaceRepository: Preserving checkInIntervalSeconds=${existingSpace.checkInIntervalSeconds} for space ${apiSpace.id}")
+                        baseSpace.copy(checkInIntervalSeconds = existingSpace.checkInIntervalSeconds)
+                    } else {
+                        baseSpace
+                    }
+                }
+                
                 val localMembers = apiSpaces.map { apiSpace ->
                     val baseMember = apiSpace.toLocalMember(userId)
                     
@@ -78,14 +91,15 @@ class SpaceRepository(private val spaceDao: SpaceDao) {
         }
     }
 
-    suspend fun createSpace(space: Space): Space? {
-        println("[DEBUG] SpaceRepository: Attempting to create space: ${space.name}")
+    suspend fun createSpace(space: Space, partnerId: Int? = null): Space? {
+        println("[DEBUG] SpaceRepository: Attempting to create space: ${space.name}, partnerId: $partnerId")
         return try {
             val createRequest = CreateSpaceRequest(
                 name = space.name,
                 type = space.type,
                 description = space.description,
                 creatorId = space.creatorId,
+                partnerId = partnerId,
                 coverColor = space.coverColor
             )
 

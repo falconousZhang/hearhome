@@ -10,6 +10,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,10 +26,18 @@ import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
+import com.example.hearhome.data.local.Friend
 import com.example.hearhome.data.local.Space
 import com.example.hearhome.data.local.User
+import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.ui.components.AppBottomNavigation
+import com.example.hearhome.utils.CheckInHelper
+import io.ktor.client.call.body
+import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -55,50 +66,104 @@ fun SpaceListScreen(
     val mySpaces by viewModel.mySpaces.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
-    val friendDao = remember { db.friendDao() }
-    val userDao = remember { db.userDao() }
 
     var coupleCandidates by remember { mutableStateOf<List<User>>(emptyList()) }
     var partnerUser by remember { mutableStateOf<User?>(null) }
     var currentUser by remember { mutableStateOf<User?>(null) }
     var coupleCandidatesLoading by remember { mutableStateOf(false) }
-    
+
     // 对话框状态
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
-    
+
+    // 从 API 加载情侣候选人（好友列表和当前用户信息）
     LaunchedEffect(showCreateDialog) {
         if (showCreateDialog) {
             coupleCandidatesLoading = true
             try {
-                val user = withContext(Dispatchers.IO) { userDao.getUserById(currentUserId) }
-                val friends = withContext(Dispatchers.IO) { friendDao.getAcceptedFriendsWithUsers(currentUserId) }
-                val candidates = friends.mapNotNull { info ->
-                    when (info.friend.senderId) {
-                        currentUserId -> info.receiver
-                        else -> if (info.friend.receiverId == currentUserId) info.sender else null
-                    }
-                }
-                    .filter { it.uid != currentUserId }
-                    .filter { it.relationshipStatus != "in_relationship" || it.partnerId == currentUserId }
-                val uniqueCandidates = candidates.associateBy { it.uid }.values.toList()
+                withContext(Dispatchers.IO) {
+                    // 1. 从 API 获取当前用户信息
+                    val userResponse = ApiService.getProfile(currentUserId)
+                    val user = if (userResponse.status == HttpStatusCode.OK) {
+                        userResponse.body<User>()
+                    } else null
 
-                val partner = if (user?.partnerId != null && user.partnerId != currentUserId) {
-                    uniqueCandidates.firstOrNull { it.uid == user.partnerId } ?: withContext(Dispatchers.IO) {
-                        userDao.getUserById(user.partnerId)
-                    }
-                } else {
-                    null
-                }
+                    println("[DEBUG SpaceListScreen] Current user: uid=${user?.uid}, partnerId=${user?.partnerId}, relationshipStatus=${user?.relationshipStatus}")
 
-                currentUser = user
-                coupleCandidates = uniqueCandidates
-                partnerUser = partner
+                    // 2. 从 API 获取好友列表
+                    val friendsResponse = ApiService.getFriends(currentUserId)
+                    val friendRelations = if (friendsResponse.status == HttpStatusCode.OK) {
+                        friendsResponse.body<List<Friend>>()
+                    } else emptyList()
+
+                    println("[DEBUG SpaceListScreen] Got ${friendRelations.size} friend relations from API")
+
+                    // 3. 获取每个好友的详细信息
+                    val friendUsers = friendRelations.map { relation ->
+                        val friendId = if (relation.senderId == currentUserId) relation.receiverId else relation.senderId
+                        async {
+                            try {
+                                val profileResponse = ApiService.getProfile(friendId)
+                                if (profileResponse.status == HttpStatusCode.OK) {
+                                    profileResponse.body<User>()
+                                } else null
+                            } catch (e: Exception) {
+                                println("[ERROR SpaceListScreen] Failed to get profile for user $friendId: ${e.message}")
+                                null
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+
+                    println("[DEBUG SpaceListScreen] Got ${friendUsers.size} friend user profiles")
+                    friendUsers.forEach { u ->
+                        println("[DEBUG SpaceListScreen] Friend: uid=${u.uid}, nickname=${u.nickname}, relationshipStatus=${u.relationshipStatus}, partnerId=${u.partnerId}")
+                    }
+
+                    // 4. 筛选情侣候选人：单身或已与当前用户是情侣
+                    val candidates = friendUsers
+                        .filter { it.uid != currentUserId }
+                        .filter { it.relationshipStatus != "in_relationship" || it.partnerId == currentUserId }
+
+                    println("[DEBUG SpaceListScreen] Filtered candidates: ${candidates.size}")
+
+                    // 5. 确定当前情侣（如果有）
+                    val partner = if (user?.partnerId != null && user.partnerId != 0 && user.partnerId != currentUserId) {
+                        // 先从好友列表中找
+                        candidates.firstOrNull { it.uid == user.partnerId }
+                            ?: friendUsers.firstOrNull { it.uid == user.partnerId }
+                            ?: run {
+                                // 如果不在好友列表中，单独获取
+                                try {
+                                    val partnerResponse = ApiService.getProfile(user.partnerId)
+                                    if (partnerResponse.status == HttpStatusCode.OK) {
+                                        partnerResponse.body<User>()
+                                    } else null
+                                } catch (e: Exception) {
+                                    println("[ERROR SpaceListScreen] Failed to get partner profile: ${e.message}")
+                                    null
+                                }
+                            }
+                    } else null
+
+                    println("[DEBUG SpaceListScreen] Partner: ${partner?.uid}, ${partner?.nickname}")
+
+                    currentUser = user
+                    coupleCandidates = candidates
+                    partnerUser = partner
+                }
+            } catch (e: Exception) {
+                println("[ERROR SpaceListScreen] Failed to load couple candidates: ${e.message}")
+                e.printStackTrace()
             } finally {
                 coupleCandidatesLoading = false
             }
         }
     }
+    
+    // 获取总的待处理提醒数量
+    val pendingMentionCount by db.postMentionDao()
+        .getPendingMentionCountFlow(currentUserId)
+        .collectAsState(initial = 0)
 
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -106,6 +171,35 @@ fun SpaceListScreen(
             TopAppBar(
                 title = { Text("我的空间") },
                 actions = {
+                    // 一键标记全部已读按钮
+                    if (pendingMentionCount > 0) {
+                        IconButton(
+                            onClick = {
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        db.postMentionDao().markAllAsViewed(
+                                            currentUserId,
+                                            System.currentTimeMillis()
+                                        )
+                                    }
+                                    snackbarHostState.showSnackbar("已将所有提醒标记为已读")
+                                }
+                            }
+                        ) {
+                            BadgedBox(
+                                badge = {
+                                    Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                        Text(if (pendingMentionCount <= 99) pendingMentionCount.toString() else "99+")
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DoneAll,
+                                    contentDescription = "一键全部已读"
+                                )
+                            }
+                        }
+                    }
                     IconButton(onClick = { showJoinDialog = true }) {
                         Icon(
                             imageVector = Icons.Default.Add,
@@ -168,8 +262,9 @@ fun SpaceListScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(mySpaces) { space ->
-                        SpaceCard(
+                        SpaceCardWithBadge(
                             space = space,
+                            currentUserId = currentUserId,
                             onClick = {
                                 navController.navigate("space_detail/${space.id}/$currentUserId")
                             }
@@ -235,6 +330,214 @@ fun SpaceListScreen(
             }
         )
     }
+}
+
+/**
+ * 带未读提醒计数和打卡状态的空间卡片
+ */
+@Composable
+fun SpaceCardWithBadge(
+    space: Space,
+    currentUserId: Int,
+    onClick: () -> Unit
+) {
+    val context = LocalContext.current
+    val db = AppDatabase.getInstance(context)
+    val scope = rememberCoroutineScope()
+    
+    // 获取该空间的待处理提醒数量
+    val pendingCount by db.postMentionDao()
+        .getPendingMentionCountBySpaceFlow(currentUserId, space.id)
+        .collectAsState(initial = 0)
+    
+    // 打卡状态
+    var checkInStatus by remember { mutableStateOf<CheckInStatus?>(null) }
+    var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
+    
+    // 加载并定时刷新打卡状态
+    LaunchedEffect(space.id, space.checkInIntervalSeconds) {
+        if (space.checkInIntervalSeconds > 0) {
+            while (true) {
+                val status = withContext(Dispatchers.IO) {
+                    val remaining = CheckInHelper.getRemainingTime(space, currentUserId, db.spaceDao())
+                    val needsCheckIn = CheckInHelper.needsCheckIn(space, currentUserId, db.spaceDao())
+                    CheckInStatus(
+                        hasCheckIn = space.checkInIntervalSeconds > 0,
+                        needsCheckIn = needsCheckIn,
+                        remainingSeconds = remaining
+                    )
+                }
+                checkInStatus = status
+                currentTime = System.currentTimeMillis()
+                delay(1000) // 每秒更新
+            }
+        }
+    }
+    
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // 空间图标（带Badge）
+                BadgedBox(
+                    badge = {
+                        if (pendingCount > 0) {
+                            Badge(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ) {
+                                Text(if (pendingCount <= 99) pendingCount.toString() else "99+")
+                            }
+                        }
+                    }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(Color(space.coverColor.toColorInt())),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Group,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+                
+                Spacer(Modifier.width(16.dp))
+                
+                // 空间信息
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = space.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = when (space.type) {
+                                "couple" -> "情侣空间"
+                                "family" -> "家族空间"
+                                else -> "未知类型"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                        if (pendingCount > 0) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "· $pendingCount 条未读提醒",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    if (space.description != null) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = space.description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
+            
+            // 打卡状态显示
+            checkInStatus?.let { status ->
+                if (status.hasCheckIn) {
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                    CheckInStatusBar(status = status)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 打卡状态
+ */
+data class CheckInStatus(
+    val hasCheckIn: Boolean,      // 是否开启打卡
+    val needsCheckIn: Boolean,    // 是否需要打卡（已超时）
+    val remainingSeconds: Long    // 剩余秒数（-1表示未设置，0表示已超时）
+)
+
+/**
+ * 打卡状态栏
+ */
+@Composable
+fun CheckInStatusBar(status: CheckInStatus) {
+    val isOverdue = status.needsCheckIn || status.remainingSeconds <= 0
+    val backgroundColor = if (isOverdue) {
+        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+    } else {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+    }
+    val contentColor = if (isOverdue) {
+        MaterialTheme.colorScheme.error
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+    
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(backgroundColor)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = if (isOverdue) Icons.Default.Warning else Icons.Default.Schedule,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = contentColor
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = if (isOverdue) "需要打卡" else "打卡倒计时",
+                style = MaterialTheme.typography.labelMedium,
+                color = contentColor,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        
+        Text(
+            text = if (isOverdue) {
+                "已超时，请发布动态"
+            } else {
+                formatCheckInCountdown(status.remainingSeconds)
+            },
+            style = MaterialTheme.typography.labelMedium,
+            color = contentColor,
+            fontWeight = if (isOverdue) FontWeight.Bold else FontWeight.Normal
+        )
+    }
+}
+
+/**
+ * 格式化打卡倒计时 (hh:mm:ss)
+ */
+private fun formatCheckInCountdown(seconds: Long): String {
+    if (seconds <= 0) return "00:00:00"
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    return String.format("%02d:%02d:%02d", hours, minutes, secs)
 }
 
 @Composable

@@ -309,7 +309,8 @@ private fun handleGlobalNavigation(
                 popUpTo(navController.graph.id) { inclusive = true }
             }
         }
-        is AuthViewModel.AuthState.Idle -> {
+        is AuthViewModel.AuthState.Idle,
+        is AuthViewModel.AuthState.LoggedOut -> {
             if (navController.currentDestination?.route != "login") {
                 navController.navigate("login") {
                     popUpTo(navController.graph.id) { inclusive = true }

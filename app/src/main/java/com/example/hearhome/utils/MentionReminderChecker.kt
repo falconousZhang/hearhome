@@ -53,6 +53,17 @@ object MentionReminderChecker {
             db.postMentionDao().updateLastNotifiedTime(mentionId, System.currentTimeMillis())
         }
     }
+    
+    /**
+     * 标记提醒为已过期
+     * 在倒计时结束后调用，使用户无法再进行"已读"操作
+     */
+    suspend fun markAsExpired(context: Context, mentionId: Int) {
+        withContext(Dispatchers.IO) {
+            val db = AppDatabase.getInstance(context)
+            db.postMentionDao().markAsExpired(mentionId)
+        }
+    }
 }
 
 /**

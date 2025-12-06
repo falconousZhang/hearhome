@@ -88,22 +88,104 @@ fun PostDetailScreen(
     var commentText by remember { mutableStateOf("") }
     var replyToUser by remember { mutableStateOf<CommentInfo?>(null) }
     var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
+    
+    // @提醒相关状态
+    var hasPendingMention by remember { mutableStateOf(false) }
+    var mentionResponded by remember { mutableStateOf(false) }
+    var mentionExpired by remember { mutableStateOf(false) }  // 是否已超时
+    var mentionStatus by remember { mutableStateOf<String?>(null) }  // 提醒状态
 
     LaunchedEffect(postId) {
         viewModel.selectPost(postId)
         
-        // 记录用户查看该动态的时间（如果用户被@提醒了）
+        // 检查用户是否有待处理的@提醒以及是否已超时
         withContext(Dispatchers.IO) {
             try {
-                db.postMentionDao().markAsViewed(
-                    postId = postId,
-                    userId = currentUserId,
-                    viewedTime = System.currentTimeMillis()
-                )
+                val mention = db.postMentionDao().getMentionForPost(postId, currentUserId)
+                if (mention != null) {
+                    mentionStatus = mention.status
+                    val timeoutMillis = mention.createdAt + mention.timeoutSeconds * 1000
+                    val now = System.currentTimeMillis()
+                    
+                    when (mention.status) {
+                        "pending" -> {
+                            // 检查是否已超时
+                            if (now >= timeoutMillis) {
+                                // 已超时但状态还是pending，标记为expired
+                                db.postMentionDao().markAsExpired(mention.id)
+                                mentionExpired = true
+                                hasPendingMention = false
+                            } else {
+                                hasPendingMention = true
+                                mentionExpired = false
+                            }
+                        }
+                        "expired" -> {
+                            mentionExpired = true
+                            hasPendingMention = false
+                        }
+                        "viewed", "ignored" -> {
+                            mentionResponded = true
+                            hasPendingMention = false
+                        }
+                    }
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
+    }
+    
+    // 处理已读操作
+    val handleMarkAsViewed: () -> Unit = {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    // 再次检查是否已超时（防止在用户操作期间超时）
+                    val mention = db.postMentionDao().getMentionForPost(postId, currentUserId)
+                    if (mention != null && mention.status == "pending") {
+                        val timeoutMillis = mention.createdAt + mention.timeoutSeconds * 1000
+                        if (System.currentTimeMillis() < timeoutMillis) {
+                            db.postMentionDao().markAsViewed(
+                                postId = postId,
+                                userId = currentUserId,
+                                viewedTime = System.currentTimeMillis()
+                            )
+                            hasPendingMention = false
+                            mentionResponded = true
+                        } else {
+                            // 已超时，标记为expired
+                            db.postMentionDao().markAsExpired(mention.id)
+                            mentionExpired = true
+                            hasPendingMention = false
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+        Unit
+    }
+    
+    // 处理忽略操作
+    val handleMarkAsIgnored: () -> Unit = {
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                try {
+                    db.postMentionDao().markAsIgnored(
+                        postId = postId,
+                        userId = currentUserId,
+                        ignoredTime = System.currentTimeMillis()
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+            hasPendingMention = false
+            mentionResponded = true
+        }
+        Unit
     }
 
     Scaffold(
@@ -123,6 +205,19 @@ fun PostDetailScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
+            // @提醒响应提示卡片（仅在有待处理提醒且未超时时显示）
+            if (hasPendingMention && !mentionExpired) {
+                MentionResponseCard(
+                    onMarkAsViewed = handleMarkAsViewed,
+                    onMarkAsIgnored = handleMarkAsIgnored
+                )
+            }
+            
+            // 超时提示卡片（在超时后显示）
+            if (mentionExpired) {
+                MentionExpiredCard()
+            }
+            
             // 动态内容区域
             LazyColumn(
                 modifier = Modifier
@@ -412,6 +507,146 @@ fun CommentItem(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
+        }
+    }
+}
+
+/**
+ * @提醒响应卡片
+ * 显示"已读"和"忽略"按钮，让用户选择如何响应@提醒
+ */
+@Composable
+fun MentionResponseCard(
+    onMarkAsViewed: () -> Unit,
+    onMarkAsIgnored: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Default.Notifications,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "有人@了你，请查看这条动态",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            
+            Spacer(Modifier.height(12.dp))
+            
+            Text(
+                text = "请选择如何响应这个提醒：",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+            )
+            
+            Spacer(Modifier.height(16.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 已读按钮（接受打卡）
+                Button(
+                    onClick = onMarkAsViewed,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("已读")
+                }
+                
+                // 忽略按钮（拒绝打卡）
+                OutlinedButton(
+                    onClick = onMarkAsIgnored,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.outline
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("忽略")
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 提醒已超时卡片
+ * 当用户的@提醒已超时时显示，告知用户无法再进行"已读"操作
+ */
+@Composable
+fun MentionExpiredCard() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "@提醒已超时",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+            
+            Spacer(Modifier.height(12.dp))
+            
+            Text(
+                text = "你没有在规定时间内响应这个提醒，已无法标记为已读。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+            )
         }
     }
 }
