@@ -484,11 +484,18 @@ fun CheckInSettingsCard(
     var minutes by remember { mutableStateOf("0") }
     var seconds by remember { mutableStateOf("0") }
     
-    // 将当前间隔转换为时分秒
-    val currentIntervalSeconds = space.checkInIntervalSeconds
-    val currentHours = currentIntervalSeconds / 3600
-    val currentMinutes = (currentIntervalSeconds % 3600) / 60
-    val currentSeconds = currentIntervalSeconds % 60
+    // 使用本地状态来跟踪当前间隔，确保UI立即更新
+    var localIntervalSeconds by remember(space.id) { mutableStateOf(space.checkInIntervalSeconds) }
+    
+    // 当 space 变化时同步本地状态
+    LaunchedEffect(space.checkInIntervalSeconds) {
+        localIntervalSeconds = space.checkInIntervalSeconds
+    }
+    
+    // 将当前间隔转换为时分秒（使用本地状态）
+    val currentHours = localIntervalSeconds / 3600
+    val currentMinutes = (localIntervalSeconds % 3600) / 60
+    val currentSeconds = localIntervalSeconds % 60
     
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -499,7 +506,7 @@ fun CheckInSettingsCard(
             )
             Spacer(Modifier.height(8.dp))
             
-            if (currentIntervalSeconds > 0) {
+            if (localIntervalSeconds > 0) {
                 Text(
                     "当前打卡间隔：${currentHours}小时 ${currentMinutes}分钟 ${currentSeconds}秒",
                     style = MaterialTheme.typography.bodyMedium
@@ -532,12 +539,15 @@ fun CheckInSettingsCard(
                     onClick = { showDialog = true },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(if (currentIntervalSeconds > 0) "修改设置" else "设置打卡")
+                    Text(if (localIntervalSeconds > 0) "修改设置" else "设置打卡")
                 }
                 
-                if (currentIntervalSeconds > 0) {
+                if (localIntervalSeconds > 0) {
                     OutlinedButton(
-                        onClick = { onUpdateInterval(0) },
+                        onClick = { 
+                            localIntervalSeconds = 0  // 立即更新本地状态
+                            onUpdateInterval(0) 
+                        },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = MaterialTheme.colorScheme.error
@@ -620,6 +630,7 @@ fun CheckInSettingsCard(
                         val totalSeconds = h * 3600 + m * 60 + s
                         
                         if (totalSeconds > 0) {
+                            localIntervalSeconds = totalSeconds  // 立即更新本地状态
                             onUpdateInterval(totalSeconds)
                             showDialog = false
                         }

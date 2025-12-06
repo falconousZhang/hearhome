@@ -1,6 +1,7 @@
 package com.example.hearhome.ui.space
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,7 +39,8 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
-
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 /**
  * 空间详情界面
  * 顶部新增：纪念日倒计时卡片
@@ -83,6 +85,36 @@ fun SpaceDetailScreen(
     val spaceMembers by spaceViewModel.spaceMembers.collectAsState()
     val scope = rememberCoroutineScope()
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
+    
+    // 用户待处理的@提醒的postId列表（用于置顶）
+    var pendingMentionPostIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    
+    // 加载用户在该空间的待处理@提醒
+    LaunchedEffect(spaceId, currentUserId) {
+        withContext(Dispatchers.IO) {
+            try {
+                val pendingMentions = db.postMentionDao().getPendingMentions(currentUserId)
+                // 获取该空间的帖子ID
+                val spacePostIds = posts.map { it.post.id }.toSet()
+                pendingMentionPostIds = pendingMentions
+                    .filter { it.postId in spacePostIds || true } // 先加载所有，后续筛选
+                    .map { it.postId }
+                    .toSet()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    // 对帖子进行排序：被@且pending的帖子置顶
+    val sortedPosts = remember(posts, pendingMentionPostIds) {
+        posts.sortedWith(compareBy(
+            // 先按是否有pending @提醒排序（有的排前面）
+            { if (it.post.id in pendingMentionPostIds) 0 else 1 },
+            // 再按时间排序（新的排前面）
+            { -it.post.timestamp }
+        ))
+    }
     
     // DEBUG: 打印当前角色（用于调试）
     LaunchedEffect(currentUserRole) {
@@ -155,7 +187,7 @@ fun SpaceDetailScreen(
                             )
                             if (isAdmin) {
                                 DropdownMenuItem(
-                                    text = { Text("成员管理") },
+                                    text = { Text("空间管理") },
                                     onClick = {
                                         showMoreMenu = false
                                         navController.navigate("space_manage/$spaceId/$currentUserId")
@@ -206,9 +238,21 @@ fun SpaceDetailScreen(
                     )
                 } 
             }
+            
+            // 打卡统计卡片（仅当启用了打卡功能时显示）
+            if (currentSpace?.checkInIntervalSeconds ?: 0 > 0) {
+                item {
+                    CheckInStatsCard(
+                        spaceId = spaceId,
+                        currentUserId = currentUserId,
+                        spacePostDao = db.spacePostDao(),
+                        userDao = db.userDao()
+                    )
+                }
+            }
 
             // 动态列表
-            if (posts.isEmpty()) {
+            if (sortedPosts.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier
@@ -224,10 +268,12 @@ fun SpaceDetailScreen(
                     }
                 }
             } else {
-                items(posts) { postInfo ->
+                items(sortedPosts) { postInfo ->
+                    val isPendingMention = postInfo.post.id in pendingMentionPostIds
                     PostCard(
                         postInfo = postInfo,
                         currentUserId = currentUserId,
+                        isPendingMention = isPendingMention, // 传递高亮标记
                         onLike = { scope.launch { postViewModel.toggleLike(postInfo.post.id) } },
                         onComment = {
                             navController.navigate("post_detail/${postInfo.post.id}/$currentUserId")
@@ -470,13 +516,26 @@ fun SpaceInfoCard(
     spaceDao: SpaceDao
 ) {
     var checkInStatus by remember { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
+    var remainingSeconds by remember { mutableStateOf(-1L) }
+    var needsCheckIn by remember { mutableStateOf(false) }
     
+    // 每秒更新打卡状态
     LaunchedEffect(space.id, space.checkInIntervalSeconds) {
         if (space.checkInIntervalSeconds > 0) {
-            checkInStatus = com.example.hearhome.utils.CheckInHelper.getCheckInStatusText(
-                space, currentUserId, spaceDao
-            )
+            while (true) {
+                withContext(Dispatchers.IO) {
+                    needsCheckIn = com.example.hearhome.utils.CheckInHelper.needsCheckIn(
+                        space, currentUserId, spaceDao
+                    )
+                    remainingSeconds = com.example.hearhome.utils.CheckInHelper.getRemainingTime(
+                        space, currentUserId, spaceDao
+                    )
+                    checkInStatus = com.example.hearhome.utils.CheckInHelper.getCheckInStatusText(
+                        space, currentUserId, spaceDao
+                    )
+                }
+                delay(1000) // 每秒更新
+            }
         }
     }
     
@@ -508,15 +567,15 @@ fun SpaceInfoCard(
                 Text(it, style = MaterialTheme.typography.bodyMedium)
             }
             
-            // 打卡状态显示
-            if (space.checkInIntervalSeconds > 0 && checkInStatus != null) {
+            // 打卡状态显示（实时倒计时）
+            if (space.checkInIntervalSeconds > 0) {
                 Spacer(Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
-                            color = if (checkInStatus == "需要打卡") 
+                            color = if (needsCheckIn) 
                                 MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
                             else 
                                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
@@ -525,23 +584,39 @@ fun SpaceInfoCard(
                         .padding(8.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Notifications,
+                        imageVector = if (needsCheckIn) Icons.Default.Warning else Icons.Default.Schedule,
                         contentDescription = null,
-                        tint = if (checkInStatus == "需要打卡")
+                        tint = if (needsCheckIn)
                             MaterialTheme.colorScheme.error
                         else
                             MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "打卡提醒: $checkInStatus",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (checkInStatus == "需要打卡")
-                            MaterialTheme.colorScheme.error
-                        else
-                            MaterialTheme.colorScheme.primary
-                    )
+                    
+                    if (needsCheckIn) {
+                        Text(
+                            text = "需要打卡！请发布动态",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Text(
+                            text = "打卡倒计时: ",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = formatCheckInCountdownDetail(remainingSeconds),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (remainingSeconds < 3600) // 小于1小时高亮
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.primary,
+                            fontWeight = if (remainingSeconds < 3600) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
                 }
             }
             
@@ -564,6 +639,7 @@ fun SpaceInfoCard(
 fun PostCard(
     postInfo: PostWithAuthorInfo,
     currentUserId: Int,
+    isPendingMention: Boolean = false, // 是否有待处理的@提醒（用于高亮）
     onLike: () -> Unit,
     onComment: () -> Unit,
     onDelete: () -> Unit,
@@ -571,9 +647,65 @@ fun PostCard(
 ) {
     val post = postInfo.post
     val author = postInfo.author
+    
+    // 高亮边框颜色
+    val borderModifier = if (isPendingMention) {
+        Modifier.border(
+            width = 2.dp,
+            color = MaterialTheme.colorScheme.error,
+            shape = MaterialTheme.shapes.medium
+        )
+    } else {
+        Modifier
+    }
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(borderModifier),
+        colors = if (isPendingMention) {
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f)
+            )
+        } else {
+            CardDefaults.cardColors()
+        }
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            // 如果是被@的帖子，显示置顶标签
+            if (isPendingMention) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.error,
+                        shape = MaterialTheme.shapes.small
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Notifications,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.onError
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "@了你",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onError,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+            
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -742,7 +874,8 @@ fun CreatePostScreen(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 500.dp)
+                    .heightIn(min = 320.dp, max = 600.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
                 EmojiTextField(
                     value = content,
@@ -851,7 +984,9 @@ fun CreatePostScreen(
                                             }
                                         },
                                         label = { Text("时", style = MaterialTheme.typography.labelSmall) },
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .widthIn(min = 72.dp),
                                         singleLine = true
                                     )
                                     Text(":")
@@ -863,7 +998,9 @@ fun CreatePostScreen(
                                             }
                                         },
                                         label = { Text("分", style = MaterialTheme.typography.labelSmall) },
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .widthIn(min = 72.dp),
                                         singleLine = true
                                     )
                                     Text(":")
@@ -875,7 +1012,9 @@ fun CreatePostScreen(
                                             }
                                         },
                                         label = { Text("秒", style = MaterialTheme.typography.labelSmall) },
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .widthIn(min = 72.dp),
                                         singleLine = true
                                     )
                                 }
@@ -947,6 +1086,7 @@ fun formatTimestamp(timestamp: Long): String {
 /**
  * 动态提醒状态显示组件
  * 显示该动态@提醒了谁，以及查看状态
+ * 倒计时以 hh:mm:ss 格式每秒更新
  */
 @Composable
 fun PostMentionStatusView(
@@ -958,34 +1098,116 @@ fun PostMentionStatusView(
     val db = AppDatabase.getInstance(context)
     val mentions by db.postMentionDao().getMentionsWithUserInfo(postId).collectAsState(initial = emptyList())
     
+    // 管理对话框状态
+    var showManageDialog by remember { mutableStateOf(false) }
+    // 触发刷新的计数器
+    var refreshTrigger by remember { mutableIntStateOf(0) }
+    
+    // 当前时间状态，每秒更新一次
+    // 使用 derivedStateOf 确保始终使用最新时间
+    var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
+    
+    // 每秒更新当前时间（始终启用以确保倒计时准确）
+    val hasUnviewedMentions = mentions.any { it.viewedAt == null && it.status == "pending" }
+    LaunchedEffect(hasUnviewedMentions, refreshTrigger) {
+        // 首次加载或刷新时立即更新时间
+        currentTime = System.currentTimeMillis()
+        
+        if (hasUnviewedMentions) {
+            while (true) {
+                delay(1000) // 每秒更新
+                currentTime = System.currentTimeMillis()
+            }
+        }
+    }
+    
     // 只有发布者或被提醒人可以看到提醒状态
     val canViewMentions = currentUserId == authorId || mentions.any { it.mentionedUserId == currentUserId }
+    val isCurrentUserMentioned = mentions.any { it.mentionedUserId == currentUserId }
+    val currentUserMention = mentions.find { it.mentionedUserId == currentUserId }
+    val isAuthor = currentUserId == authorId
+    
+    // 显示管理对话框
+    if (showManageDialog && isAuthor) {
+        com.example.hearhome.ui.components.MentionManageDialog(
+            postId = postId,
+            currentUserId = currentUserId,
+            onDismiss = { showManageDialog = false },
+            onMentionsChanged = { 
+                // 提醒已更改，触发刷新并立即更新时间
+                refreshTrigger++
+                currentTime = System.currentTimeMillis()
+            }
+        )
+    }
     
     if (mentions.isNotEmpty() && canViewMentions) {
         Spacer(Modifier.height(8.dp))
+        
+        // 如果当前用户被@，使用高亮显示
+        val containerColor = if (isCurrentUserMentioned && currentUserMention?.status == "pending") {
+            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f) // 高亮
+        } else {
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+        }
+        
         Card(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
-            )
+            colors = CardDefaults.cardColors(containerColor = containerColor)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Default.Notifications,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.secondary
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "提醒了 ${mentions.size} 人查看",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Notifications,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = if (isCurrentUserMentioned) MaterialTheme.colorScheme.error 
+                                   else MaterialTheme.colorScheme.secondary
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        
+                        // 优化文案：如果当前用户被@，显示"提醒了你和其他x人"
+                        val mentionText = if (isCurrentUserMentioned) {
+                            val otherCount = mentions.size - 1
+                            if (otherCount > 0) {
+                                "提醒了你和其他 $otherCount 人查看"
+                            } else {
+                                "提醒了你查看"
+                            }
+                        } else {
+                            "提醒了 ${mentions.size} 人查看"
+                        }
+                        
+                        Text(
+                            text = mentionText,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isCurrentUserMentioned) MaterialTheme.colorScheme.error
+                                   else MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                    
+                    // 作者才显示管理按钮
+                    if (isAuthor && mentions.any { it.status == "pending" }) {
+                        IconButton(
+                            onClick = { showManageDialog = true },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "管理@提醒",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
                 }
-                
+
                 Spacer(Modifier.height(8.dp))
                 
                 mentions.forEach { mention ->
@@ -1010,47 +1232,67 @@ fun PostMentionStatusView(
                         )
                         
                         // 查看状态
-                        if (mention.viewedAt != null) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(14.dp),
-                                    tint = Color(0xFF4CAF50)
-                                )
-                                Spacer(Modifier.width(2.dp))
-                                Text(
-                                    text = formatTimestamp(mention.viewedAt),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = Color(0xFF4CAF50)
-                                )
-                            }
-                        } else {
-                            // 显示剩余时间或已超时
-                            val timeoutMillis = mention.createdAt + mention.timeoutSeconds * 1000
-                            val now = System.currentTimeMillis()
-                            
-                            if (now < timeoutMillis) {
-                                val remainingSeconds = (timeoutMillis - now) / 1000
-                                Text(
-                                    text = com.example.hearhome.utils.CheckInHelper.formatInterval(remainingSeconds),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.outline
-                                )
-                            } else {
+                        when (mention.status) {
+                            "viewed" -> {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        Icons.Default.Close,
+                                        Icons.Default.Check,
                                         contentDescription = null,
                                         modifier = Modifier.size(14.dp),
-                                        tint = MaterialTheme.colorScheme.error
+                                        tint = Color(0xFF4CAF50)
                                     )
                                     Spacer(Modifier.width(2.dp))
                                     Text(
-                                        text = "未查看",
+                                        text = "已读 ${mention.viewedAt?.let { formatTimestamp(it) } ?: ""}",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.error
+                                        color = Color(0xFF4CAF50)
                                     )
+                                }
+                            }
+                            "ignored" -> {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        Icons.Default.DoNotDisturb,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp),
+                                        tint = MaterialTheme.colorScheme.outline
+                                    )
+                                    Spacer(Modifier.width(2.dp))
+                                    Text(
+                                        text = "已忽略",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+                            else -> {
+                                // pending 或其他状态，显示剩余时间或已超时（使用 hh:mm:ss 格式）
+                                val timeoutMillis = mention.createdAt + mention.timeoutSeconds * 1000
+                                
+                                if (currentTime < timeoutMillis) {
+                                    val remainingSeconds = (timeoutMillis - currentTime) / 1000
+                                    Text(
+                                        text = formatCountdownHHMMSS(remainingSeconds),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (remainingSeconds < 60) MaterialTheme.colorScheme.error 
+                                               else MaterialTheme.colorScheme.outline,
+                                        fontWeight = if (remainingSeconds < 60) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                } else {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                        Spacer(Modifier.width(2.dp))
+                                        Text(
+                                            text = "已超时",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1058,5 +1300,280 @@ fun PostMentionStatusView(
                 }
             }
         }
+    }
+}
+
+/**
+ * 格式化倒计时为 hh:mm:ss 格式
+ */
+private fun formatCountdownHHMMSS(totalSeconds: Long): String {
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+}
+
+/**
+ * 格式化打卡倒计时（带更详细的时间显示）
+ */
+private fun formatCheckInCountdownDetail(seconds: Long): String {
+    if (seconds <= 0) return "00:00:00"
+    
+    val days = seconds / 86400
+    val hours = (seconds % 86400) / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+    
+    return if (days > 0) {
+        String.format("%d天 %02d:%02d:%02d", days, hours, minutes, secs)
+    } else {
+        String.format("%02d:%02d:%02d", hours, minutes, secs)
+    }
+}
+
+/**
+ * 打卡统计卡片组件
+ * 显示当前用户的打卡统计信息和最近打卡历史
+ */
+@Composable
+fun CheckInStatsCard(
+    spaceId: Int,
+    currentUserId: Int,
+    spacePostDao: SpacePostDao,
+    userDao: UserDao
+) {
+    var myPostCount by remember { mutableStateOf(0) }
+    var recentPosts by remember { mutableStateOf<List<SpacePost>>(emptyList()) }
+    var allStats by remember { mutableStateOf<List<com.example.hearhome.data.local.CheckInStat>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var showHistory by remember { mutableStateOf(false) }
+    
+    // 获取当前月份的起止时间
+    val calendar = Calendar.getInstance()
+    val currentMonthStart = calendar.apply {
+        set(Calendar.DAY_OF_MONTH, 1)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    val currentMonthEnd = calendar.apply {
+        add(Calendar.MONTH, 1)
+        add(Calendar.MILLISECOND, -1)
+    }.timeInMillis
+    
+    var monthlyPostCount by remember { mutableStateOf(0) }
+    
+    LaunchedEffect(spaceId) {
+        withContext(Dispatchers.IO) {
+            myPostCount = spacePostDao.getPostCountByUser(spaceId, currentUserId)
+            recentPosts = spacePostDao.getRecentPostsByUser(spaceId, currentUserId, 5)
+            allStats = spacePostDao.getCheckInStatsBySpace(spaceId)
+            monthlyPostCount = spacePostDao.getPostCountByUserInPeriod(
+                spaceId, currentUserId, currentMonthStart, currentMonthEnd
+            )
+            isLoading = false
+        }
+    }
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Assessment,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "打卡统计",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                
+                TextButton(onClick = { showHistory = !showHistory }) {
+                    Text(if (showHistory) "收起" else "查看历史")
+                }
+            }
+            
+            if (isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                }
+            } else {
+                Spacer(Modifier.height(8.dp))
+                
+                // 统计概览
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    StatItem(
+                        label = "总打卡",
+                        value = myPostCount.toString(),
+                        icon = Icons.Default.Done
+                    )
+                    StatItem(
+                        label = "本月打卡",
+                        value = monthlyPostCount.toString(),
+                        icon = Icons.Default.CalendarMonth
+                    )
+                    StatItem(
+                        label = "空间排名",
+                        value = run {
+                            val rank = allStats.indexOfFirst { it.authorId == currentUserId } + 1
+                            if (rank > 0) "#$rank" else "-"
+                        },
+                        icon = Icons.Default.EmojiEvents
+                    )
+                }
+                
+                // 展开历史记录
+                if (showHistory) {
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(12.dp))
+                    
+                    Text(
+                        text = "最近打卡记录",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    if (recentPosts.isEmpty()) {
+                        Text(
+                            text = "暂无打卡记录",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    } else {
+                        recentPosts.forEach { post ->
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = post.content.take(30) + if (post.content.length > 30) "..." else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = formatTimestamp(post.timestamp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+                    }
+                    
+                    // 空间成员打卡排行
+                    if (allStats.size > 1) {
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(12.dp))
+                        
+                        Text(
+                            text = "成员打卡排行",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        allStats.take(5).forEachIndexed { index, stat ->
+                            var userName by remember { mutableStateOf("加载中...") }
+                            
+                            LaunchedEffect(stat.authorId) {
+                                withContext(Dispatchers.IO) {
+                                    val user = userDao.getUserById(stat.authorId)
+                                    userName = user?.nickname ?: "用户${stat.authorId}"
+                                }
+                            }
+                            
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "#${index + 1}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = when (index) {
+                                            0 -> Color(0xFFFFD700) // 金
+                                            1 -> Color(0xFFC0C0C0) // 银
+                                            2 -> Color(0xFFCD7F32) // 铜
+                                            else -> MaterialTheme.colorScheme.outline
+                                        },
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = userName + if (stat.authorId == currentUserId) " (我)" else "",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (stat.authorId == currentUserId) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                                Text(
+                                    text = "${stat.count}次",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 统计项组件
+ */
+@Composable
+private fun StatItem(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }

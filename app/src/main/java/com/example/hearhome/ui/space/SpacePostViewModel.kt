@@ -32,35 +32,40 @@ class SpacePostViewModel(
     private val _selectedPostId = MutableStateFlow<Int?>(null)
     
     // 空间内的所有动态（使用响应式Flow，类似comments的实现）
+    // 同时监听动态列表、附件变化和收藏状态变化
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val posts: StateFlow<List<PostWithAuthorInfo>> = spacePostDao.getSpacePosts(spaceId)
-        .flatMapLatest { postList ->
-            if (postList.isEmpty()) {
-                flowOf(emptyList())
-            } else {
-                val postIds = postList.map { it.id }
-                mediaAttachmentDao
-                    .observeAttachmentsForOwners(
-                        AttachmentOwnerType.SPACE_POST,
-                        postIds
-                    )
-                    .mapLatest { attachments ->
-                        val attachmentsMap = attachments.groupBy { it.ownerId }
-                        postList.map { post ->
-                            val author = userDao.getUserById(post.authorId)
-                            val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
-                            val hasFavorited = postFavoriteDao.isFavorited(currentUserId, post.id) > 0
-                            PostWithAuthorInfo(
-                                post = post,
-                                author = author,
-                                hasLiked = hasLiked,
-                                hasFavorited = hasFavorited,
-                                attachments = attachmentsMap[post.id].orEmpty()
-                            )
-                        }
+    val posts: StateFlow<List<PostWithAuthorInfo>> = combine(
+        spacePostDao.getSpacePosts(spaceId),
+        postFavoriteDao.observeUserFavoritedPostIds(currentUserId)
+    ) { postList, favoritedPostIds ->
+        Pair(postList, favoritedPostIds.toSet())
+    }.flatMapLatest { (postList, favoritedPostIds) ->
+        if (postList.isEmpty()) {
+            flowOf(emptyList())
+        } else {
+            val postIds = postList.map { it.id }
+            mediaAttachmentDao
+                .observeAttachmentsForOwners(
+                    AttachmentOwnerType.SPACE_POST,
+                    postIds
+                )
+                .mapLatest { attachments ->
+                    val attachmentsMap = attachments.groupBy { it.ownerId }
+                    postList.map { post ->
+                        val author = userDao.getUserById(post.authorId)
+                        val hasLiked = spacePostDao.hasLiked(post.id, currentUserId) > 0
+                        val hasFavorited = post.id in favoritedPostIds
+                        PostWithAuthorInfo(
+                            post = post,
+                            author = author,
+                            hasLiked = hasLiked,
+                            hasFavorited = hasFavorited,
+                            attachments = attachmentsMap[post.id].orEmpty()
+                        )
                     }
-            }
-        }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+                }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     // 收藏的动态列表
     private val _favoritePosts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())

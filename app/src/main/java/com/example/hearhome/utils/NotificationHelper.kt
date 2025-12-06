@@ -21,12 +21,16 @@ object NotificationHelper {
     private const val CHANNEL_ID_COMMENT = "hearhome_comment"
     private const val CHANNEL_ID_LIKE = "hearhome_like"
     private const val CHANNEL_ID_SPACE = "hearhome_space"
+    private const val CHANNEL_ID_MENTION = "hearhome_mention"
+    private const val CHANNEL_ID_CHECKIN = "hearhome_checkin"
     
     // 通知渠道名称
     private const val CHANNEL_NAME_DEFAULT = "默认通知"
     private const val CHANNEL_NAME_COMMENT = "评论通知"
     private const val CHANNEL_NAME_LIKE = "点赞通知"
     private const val CHANNEL_NAME_SPACE = "空间通知"
+    private const val CHANNEL_NAME_MENTION = "@提醒通知"
+    private const val CHANNEL_NAME_CHECKIN = "打卡提醒"
     
     /**
      * 创建通知渠道（Android 8.0+需要）
@@ -71,10 +75,30 @@ object NotificationHelper {
                 description = "空间相关通知（加入申请、新动态等）"
             }
             
+            // 创建@提醒通知渠道
+            val mentionChannel = NotificationChannel(
+                CHANNEL_ID_MENTION,
+                CHANNEL_NAME_MENTION,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "@提醒超时通知"
+            }
+            
+            // 创建打卡提醒通知渠道
+            val checkinChannel = NotificationChannel(
+                CHANNEL_ID_CHECKIN,
+                CHANNEL_NAME_CHECKIN,
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "定时打卡提醒"
+            }
+            
             notificationManager.createNotificationChannel(defaultChannel)
             notificationManager.createNotificationChannel(commentChannel)
             notificationManager.createNotificationChannel(likeChannel)
             notificationManager.createNotificationChannel(spaceChannel)
+            notificationManager.createNotificationChannel(mentionChannel)
+            notificationManager.createNotificationChannel(checkinChannel)
         }
     }
     
@@ -231,5 +255,56 @@ object NotificationHelper {
      */
     fun cancelAllNotifications(context: Context) {
         NotificationManagerCompat.from(context).cancelAll()
+    }
+    
+    /**
+     * 发送@提醒超时通知
+     */
+    fun sendMentionTimeoutNotification(
+        context: Context,
+        notificationId: Int,
+        mentionerName: String,
+        contentPreview: String,
+        postId: Int? = null
+    ) {
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID_MENTION)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("@提醒已超时")
+            .setContentText("$mentionerName @了你查看: $contentPreview")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+        
+        with(NotificationManagerCompat.from(context)) {
+            try {
+                notify(notificationId, builder.build())
+            } catch (e: SecurityException) {
+                e.printStackTrace()
+            }
+        }
+    }
+    
+    /**
+     * 发送打卡提醒通知
+     */
+    fun sendCheckInReminderNotification(
+        context: Context,
+        notificationId: Int,
+        spaceName: String,
+        intervalText: String
+    ) {
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID_CHECKIN)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("打卡提醒")
+            .setContentText("「$spaceName」需要你发布动态，距上次发布已超过$intervalText")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+        
+        with(NotificationManagerCompat.from(context)) {
+            try {
+                notify(notificationId, builder.build())
+            } catch (e: SecurityException) {
+                e.printStackTrace()
+            }
+        }
     }
 }

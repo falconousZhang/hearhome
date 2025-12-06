@@ -130,7 +130,9 @@ class CoupleViewModel(private val apiService: ApiService) : ViewModel() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null, successMessage = null)
             try {
+                println("[DEBUG CoupleViewModel] sendCoupleRequest: requesterId=$requesterId, partnerId=$partnerId")
                 val response = apiService.sendCoupleRequest(requesterId, partnerId)
+                println("[DEBUG CoupleViewModel] sendCoupleRequest response status: ${response.status}")
                 if (response.status == HttpStatusCode.Created || response.status == HttpStatusCode.OK) {
                     _uiState.value = _uiState.value.copy(
                         successMessage = "情侣请求已发送",
@@ -138,12 +140,15 @@ class CoupleViewModel(private val apiService: ApiService) : ViewModel() {
                     )
                     onSuccess()
                 } else {
+                    println("[DEBUG CoupleViewModel] sendCoupleRequest failed with status: ${response.status}")
                     _uiState.value = _uiState.value.copy(
                         error = "发送请求失败",
                         isLoading = false
                     )
                 }
             } catch (e: Exception) {
+                println("[ERROR CoupleViewModel] sendCoupleRequest exception: ${e.message}")
+                e.printStackTrace()
                 _uiState.value = _uiState.value.copy(
                     error = "发送请求出错: ${e.message}",
                     isLoading = false

@@ -162,4 +162,67 @@ interface SpacePostDao {
         updateCommentCount(comment.postId, 1)
         return commentId
     }
+    
+    // ==================== 打卡统计相关 ====================
+    
+    /**
+     * 获取用户在某个空间的打卡历史（最近的动态列表）
+     * @param spaceId 空间ID
+     * @param userId 用户ID
+     * @param limit 返回数量限制
+     */
+    @Query("""
+        SELECT * FROM space_posts 
+        WHERE spaceId = :spaceId 
+          AND authorId = :userId 
+          AND status = 'normal'
+        ORDER BY timestamp DESC
+        LIMIT :limit
+    """)
+    suspend fun getRecentPostsByUser(spaceId: Int, userId: Int, limit: Int): List<SpacePost>
+    
+    /**
+     * 获取用户在某个空间的打卡总数
+     */
+    @Query("""
+        SELECT COUNT(*) FROM space_posts 
+        WHERE spaceId = :spaceId 
+          AND authorId = :userId 
+          AND status = 'normal'
+    """)
+    suspend fun getPostCountByUser(spaceId: Int, userId: Int): Int
+    
+    /**
+     * 获取用户在某个空间某时间段内的打卡次数
+     */
+    @Query("""
+        SELECT COUNT(*) FROM space_posts 
+        WHERE spaceId = :spaceId 
+          AND authorId = :userId 
+          AND status = 'normal'
+          AND timestamp >= :startTime
+          AND timestamp <= :endTime
+    """)
+    suspend fun getPostCountByUserInPeriod(spaceId: Int, userId: Int, startTime: Long, endTime: Long): Int
+    
+    /**
+     * 获取空间所有成员的打卡统计
+     */
+    @Query("""
+        SELECT authorId, COUNT(*) as count, MAX(timestamp) as lastPostTime
+        FROM space_posts 
+        WHERE spaceId = :spaceId AND status = 'normal'
+        GROUP BY authorId
+        ORDER BY count DESC, lastPostTime DESC
+    """)
+    suspend fun getCheckInStatsBySpace(spaceId: Int): List<CheckInStat>
 }
+
+/**
+ * 打卡统计数据
+ */
+data class CheckInStat(
+    val authorId: Int,
+    val count: Int,
+    val lastPostTime: Long
+)

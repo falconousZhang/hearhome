@@ -54,6 +54,12 @@ interface SpaceDao {
     @Query("SELECT * FROM spaces WHERE id = :spaceId LIMIT 1")
     suspend fun getSpaceById(spaceId: Int): Space?
     
+    /**
+     * 获取空间信息（Flow版本，用于实时更新）
+     */
+    @Query("SELECT * FROM spaces WHERE id = :spaceId LIMIT 1")
+    fun getSpaceByIdFlow(spaceId: Int): Flow<Space?>
+    
     @Query("SELECT * FROM spaces WHERE inviteCode = :inviteCode AND status = 'active' LIMIT 1")
     suspend fun getSpaceByInviteCode(inviteCode: String): Space?
 

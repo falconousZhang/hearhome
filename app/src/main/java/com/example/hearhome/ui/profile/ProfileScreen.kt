@@ -177,6 +177,16 @@ fun ProfileScreen(
                 Spacer(modifier = Modifier.weight(1f))
             }
         }
+        
+        if (showLogoutDialog) {
+            LogoutConfirmationDialog(
+                onConfirm = {
+                    showLogoutDialog = false
+                    authViewModel.logout()
+                },
+                onDismiss = { showLogoutDialog = false }
+            )
+        }
     }
 }
 

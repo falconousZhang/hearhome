@@ -45,6 +45,9 @@ class SpaceViewModel(
     // --- Original Properties (unchanged) ---
     private val _currentSpace = MutableStateFlow<Space?>(null)
     val currentSpace: StateFlow<Space?> = _currentSpace.asStateFlow()
+    
+    // 当前选中的空间ID，用于观察空间变化
+    private val _selectedSpaceId = MutableStateFlow<Int?>(null)
 
     private val _spaceMembers = MutableStateFlow<List<SpaceMemberInfo>>(emptyList())
     val spaceMembers: StateFlow<List<SpaceMemberInfo>> = _spaceMembers.asStateFlow()
@@ -57,6 +60,15 @@ class SpaceViewModel(
 
     init {
         refreshMySpaces()
+        
+        // 观察当前选中空间的变化（通过 Flow 实时更新）
+        viewModelScope.launch {
+            _selectedSpaceId.filterNotNull().flatMapLatest { spaceId ->
+                spaceDao.getSpaceByIdFlow(spaceId)
+            }.collect { space ->
+                _currentSpace.value = space
+            }
+        }
     }
 
     fun refreshMySpaces() {
@@ -85,7 +97,7 @@ class SpaceViewModel(
             creatorId = currentUserId,
             inviteCode = "" // Server generates this
         )
-        val newSpace = repository.createSpace(spaceToCreate)
+        val newSpace = repository.createSpace(spaceToCreate, partnerUserId)
         _isLoading.value = false
         return if (newSpace != null) {
             CreateSpaceResult.Success(newSpace.id, "空间创建成功！")
@@ -125,8 +137,12 @@ class SpaceViewModel(
 
     /**
      * [MODIFIED] When a space is selected, now also loads its messages.
+     * 使用 Flow 观察空间变化，确保打卡间隔等设置能够实时更新
      */
     fun selectSpace(spaceId: Int) {
+        // 设置选中的空间ID，触发 Flow 观察
+        _selectedSpaceId.value = spaceId
+        
         viewModelScope.launch {
             val space = spaceDao.getSpaceById(spaceId)
             _currentSpace.value = space
