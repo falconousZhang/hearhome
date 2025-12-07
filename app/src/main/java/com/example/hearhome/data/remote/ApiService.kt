@@ -113,7 +113,7 @@ data class PostMention(
 data class CoupleRequest(val requesterId: Int, val partnerId: Int)
 
 object ApiService {
-    private const val BASE_URL = "http://10.0.2.2:8080"
+    private const val BASE_URL = "http://121.37.136.244:8080/"   //http://10.0.2.2:8080
 
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
@@ -488,5 +488,38 @@ object ApiService {
      */
     suspend fun getSpaceById(spaceId: Int): Space {
         return client.get("$BASE_URL/space/$spaceId").body()
+    }
+
+    // ==================== Anniversary (纪念日) API ====================
+
+    /**
+     * 创建纪念日
+     */
+    suspend fun createAnniversary(request: CreateAnniversaryRequest): HttpResponse {
+        return client.post("$BASE_URL/anniversaries") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }
+    }
+
+    /**
+     * 获取指定空间下的纪念日列表
+     */
+    suspend fun getAnniversaries(spaceId: Int): List<ApiAnniversary> {
+        return client.get("$BASE_URL/anniversaries/space/$spaceId").body()
+    }
+
+    /**
+     * 确认纪念日 (状态变更为 confirmed)
+     */
+    suspend fun confirmAnniversary(anniversaryId: Int): HttpResponse {
+        return client.post("$BASE_URL/anniversaries/$anniversaryId/confirm")
+    }
+
+    /**
+     * 删除纪念日
+     */
+    suspend fun deleteAnniversary(anniversaryId: Int): HttpResponse {
+        return client.delete("$BASE_URL/anniversaries/$anniversaryId")
     }
 }
