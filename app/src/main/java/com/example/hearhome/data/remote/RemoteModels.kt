@@ -51,3 +51,26 @@ data class ResetPasswordRequest(
 data class SecurityQuestionResponse(
     val question: String
 )
+
+/* ---------- Anniversary (纪念日) Models ---------- */
+
+@Serializable
+data class ApiAnniversary(
+    val id: Int = 0,
+    val spaceId: Int,
+    val name: String,
+    val dateMillis: Long,
+    val style: String = "simple",
+    val status: String = "pending", // pending, confirmed, active
+    val creatorUserId: Int,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class CreateAnniversaryRequest(
+    val spaceId: Int,
+    val name: String,
+    val dateMillis: Long,
+    val style: String,
+    val creatorUserId: Int
+)

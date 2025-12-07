@@ -132,10 +132,9 @@ fun AnniversaryScreen(
     if (showCreate) {
         CreateAnniversaryDialog(
             onDismiss = { showCreate = false },
-            onCreate = { name, dateText, timeText, style ->
-                val millis = parseDateTimeMillis(dateText, timeText) ?: return@CreateAnniversaryDialog
-                vm.create(name, millis, style) { newId ->
-                    val c = Calendar.getInstance().apply { timeInMillis = millis }
+            onCreate = { name, dateMillis, style ->
+                vm.create(name, dateMillis, style) { newId ->
+                    val c = Calendar.getInstance().apply { timeInMillis = dateMillis }
                     AnniversaryReminder.scheduleYearlyExact(
                         context = context,
                         anniversaryId = newId,
@@ -157,12 +156,9 @@ fun AnniversaryScreen(
 @Composable
 private fun CreateAnniversaryDialog(
     onDismiss: () -> Unit,
-    onCreate: (name: String, dateText: String, timeText: String, style: String) -> Unit
+    onCreate: (name: String, dateMillis: Long, style: String) -> Unit
 ) {
     var nameText by remember { mutableStateOf("") }
-    var dateText by remember { mutableStateOf("") }   // yyyy-MM-dd
-    var timeText by remember { mutableStateOf("") }   // HH:mm
-
     val styleOptions = listOf(
         "simple" to "简洁",
         "ring" to "环形",
@@ -173,8 +169,20 @@ private fun CreateAnniversaryDialog(
     var styleMenu by remember { mutableStateOf(false) }
     var stylePair by remember { mutableStateOf(styleOptions.first()) }
 
-    var dateError by remember { mutableStateOf<String?>(null) }
-    var timeError by remember { mutableStateOf<String?>(null) }
+    // 使用 Material 3 的 DatePicker 和 TimePicker 状态
+    val datePickerState = rememberDatePickerState()
+    val timePickerState = rememberTimePickerState()
+    
+    // 控制日期和时间选择器的显示
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    
+    // 用于显示的选中时间文本
+    val selectedDateText = datePickerState.selectedDateMillis?.let {
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(it)
+    } ?: "选择日期"
+    
+    val selectedTimeText = String.format(Locale.getDefault(), "%02d:%02d", timePickerState.hour, timePickerState.minute)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -188,24 +196,23 @@ private fun CreateAnniversaryDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    value = dateText,
-                    onValueChange = { dateText = it; dateError = null },
-                    isError = dateError != null,
-                    supportingText = { dateError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                    label = { Text("日期（yyyy-MM-dd）") },
-                    singleLine = true,
+                
+                // 日期选择按钮
+                OutlinedButton(
+                    onClick = { showDatePicker = true },
                     modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = timeText,
-                    onValueChange = { timeText = it; timeError = null },
-                    isError = timeError != null,
-                    supportingText = { timeError?.let { Text(it, color = MaterialTheme.colorScheme.error) } },
-                    label = { Text("时间（HH:mm）") },
-                    singleLine = true,
+                ) {
+                    Text(text = "日期: $selectedDateText")
+                }
+
+                // 时间选择按钮
+                OutlinedButton(
+                    onClick = { showTimePicker = true },
                     modifier = Modifier.fillMaxWidth()
-                )
+                ) {
+                    Text(text = "时间: $selectedTimeText")
+                }
+
                 Box {
                     Row(
                         modifier = Modifier
@@ -229,47 +236,51 @@ private fun CreateAnniversaryDialog(
         },
         confirmButton = {
             Button(
-                enabled = nameText.isNotBlank() && dateText.isNotBlank() && timeText.isNotBlank(),
+                enabled = nameText.isNotBlank() && datePickerState.selectedDateMillis != null,
                 onClick = {
-                    if (!isValidDate(dateText)) { dateError = "日期格式应为 yyyy-MM-dd"; return@Button }
-                    if (!isValidTime(timeText)) { timeError = "时间格式应为 HH:mm"; return@Button }
-                    onCreate(nameText, dateText, timeText, stylePair.first)
+                    val dateMillis = datePickerState.selectedDateMillis ?: return@Button
+                    val calendar = Calendar.getInstance().apply {
+                        timeInMillis = dateMillis
+                        set(Calendar.HOUR_OF_DAY, timePickerState.hour)
+                        set(Calendar.MINUTE, timePickerState.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    onCreate(nameText, calendar.timeInMillis, stylePair.first)
                 }
             ) { Text("保存（待确认）") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
-}
 
-/* ---------- 时间工具 ---------- */
+    // 日期选择弹窗
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 
-private fun parseDateTimeMillis(dateText: String, timeText: String): Long? {
-    val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
-    return try {
-        val d = dateFmt.parse(dateText) ?: return null
-        val t = timeFmt.parse(timeText) ?: return null
-        val cd = Calendar.getInstance().apply { time = d }
-        val ct = Calendar.getInstance().apply { time = t }
-        Calendar.getInstance().apply {
-            set(Calendar.YEAR, cd.get(Calendar.YEAR))
-            set(Calendar.MONTH, cd.get(Calendar.MONTH))
-            set(Calendar.DAY_OF_MONTH, cd.get(Calendar.DAY_OF_MONTH))
-            set(Calendar.HOUR_OF_DAY, ct.get(Calendar.HOUR_OF_DAY))
-            set(Calendar.MINUTE, ct.get(Calendar.MINUTE))
-            set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
-    } catch (_: ParseException) {
-        null
+    // 时间选择弹窗
+    if (showTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showTimePicker = false },
+            confirmButton = {
+                TextButton(onClick = { showTimePicker = false }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePicker = false }) { Text("取消") }
+            },
+            text = {
+                TimePicker(state = timePickerState)
+            }
+        )
     }
 }
-
-private fun isValidDate(dateText: String): Boolean = try {
-    val f = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()); f.isLenient = false
-    f.parse(dateText) != null
-} catch (_: Exception) { false }
-
-private fun isValidTime(timeText: String): Boolean = try {
-    val f = SimpleDateFormat("HH:mm", Locale.getDefault()); f.isLenient = false
-    f.parse(timeText) != null
-} catch (_: Exception) { false }
