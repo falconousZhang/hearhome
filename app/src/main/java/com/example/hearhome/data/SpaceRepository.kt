@@ -60,23 +60,20 @@ class SpaceRepository(private val spaceDao: SpaceDao) {
                 }
                 
                 val localMembers = apiSpaces.map { apiSpace ->
-                    val baseMember = apiSpace.toLocalMember(userId)
+                    // 先查询本地是否已有该成员记录
+                    val existingMember = currentMembers.find { it.spaceId == apiSpace.id }
+                    val baseMember = apiSpace.toLocalMember(userId, existingMember)
                     
                     // 3. PROTECTION 1: If user is owner locally, keep the owner role
-                    var member = if (ownerSpaceIds.contains(apiSpace.id) && baseMember.role == "member") {
+                    if (ownerSpaceIds.contains(apiSpace.id) && baseMember.role == "member") {
                         println("[DEBUG] SpaceRepository: Protecting owner role for space ${apiSpace.id}")
                         baseMember.copy(role = "owner")
                     } else {
                         baseMember
                     }
                     
-                    // 4. PROTECTION 2: If user has a pending membership locally, keep it as pending
-                    if (pendingMemberships.contains(apiSpace.id) && member.status == "active") {
-                        println("[DEBUG] SpaceRepository: Protecting pending status for space ${apiSpace.id}")
-                        member = member.copy(status = "pending")
-                    }
-                    
-                    member
+                    // 移除 PROTECTION 2: 现在服务器正确返回 userStatus，应该信任服务器的状态
+                    // 不再强制保持本地的 pending 状态，允许服务器的 active 状态同步到本地
                 }
 
                 // 5. Call the DAO method to sync both lists in one transaction.
@@ -168,8 +165,9 @@ class SpaceRepository(private val spaceDao: SpaceDao) {
                         spaceDao.addSpaceMember(pendingMembership)
                         println("[DEBUG] SpaceRepository: Created pending membership for userId=$userId in spaceId=${localSpace.id}")
                         
-                        // 再调用 refreshSpaces 来同步其他用户创建的空间
-                        refreshSpaces(userId)
+                        // 注意：不要在这里调用 refreshSpaces()，因为服务器可能不返回 userStatus，
+                        // 会导致刚设置的 pending 状态被覆盖为 active
+                        // refreshSpaces(userId)
                         
                         JoinSpaceResult.Joined(localSpace, "Successfully joined space! Waiting for approval...")
                     } catch (e: Exception) {
@@ -224,15 +222,17 @@ fun ApiSpace.toLocalSpace(): Space {
 
 /**
  * [ADDED] New mapping function to convert an ApiSpace into a local SpaceMember.
+ * [FIXED] 使用服务器返回的 userMemberId，确保本地和远程的 memberId 一致
  */
-fun ApiSpace.toLocalMember(currentUserId: Int): SpaceMember {
+fun ApiSpace.toLocalMember(currentUserId: Int, existingMember: SpaceMember? = null): SpaceMember {
     return SpaceMember(
+        id = this.userMemberId ?: existingMember?.id ?: 0, // 优先使用服务器返回的memberId，确保一致性
         spaceId = this.id,
         userId = currentUserId,
-        role = this.userRole ?: "member", // Use role from server, or default to "member"
-        status = this.userStatus ?: "active", // Use status from server, or default to "active"
-        nickname = null, // This info isn't provided by the /space endpoint
-        joinedAt = System.currentTimeMillis() // This is a local-only field, so we just use current time
+        role = this.userRole ?: existingMember?.role ?: "member", // 优先使用服务器返回的角色
+        status = this.userStatus ?: existingMember?.status ?: "active", // 优先使用服务器返回的状态
+        nickname = existingMember?.nickname, // 保留本地昵称
+        joinedAt = existingMember?.joinedAt ?: System.currentTimeMillis() // 保留本地加入时间
     )
 }
 
