@@ -34,6 +34,11 @@ interface SpaceDao {
      */
     @Transaction
     suspend fun syncUserSpacesAndMembers(userId: Int, spaces: List<Space>, members: List<SpaceMember>) {
+        println("[DEBUG SpaceDao] syncUserSpacesAndMembers: userId=$userId, spaces=${spaces.size}, members=${members.size}")
+        members.forEach { member ->
+            println("[DEBUG SpaceDao] syncUserSpacesAndMembers: inserting member spaceId=${member.spaceId}, userId=${member.userId}, status=${member.status}")
+        }
+        
         // 1. Delete memberships for this user, BUT preserve pending statuses
         // This way, pending join requests won't be wiped out by sync
         deleteAllSpaceMembersForUserExceptPending(userId)

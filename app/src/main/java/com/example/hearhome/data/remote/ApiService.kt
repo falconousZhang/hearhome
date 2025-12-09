@@ -61,6 +61,7 @@ data class ApiSpace(
     val createdAt: Long = 0,
     val status: String = "active",
     val checkInIntervalSeconds: Long = 0,
+    val userMemberId: Int? = null,   // ADDED - space_members 表的 id
     val userRole: String? = null,    // ADDED
     val userStatus: String? = null  // ADDED
 )
@@ -344,15 +345,22 @@ object ApiService {
     // --- Space Member Management Functions ---
 
     suspend fun approveMember(memberId: Int): HttpResponse {
-        return client.post("$BASE_URL/space/members/approve/$memberId")
+        val url = "${BASE_URL}space/members/approve/$memberId"
+        println("[DEBUG ApiService] approveMember URL: $url")
+        return client.post(url) {
+            // 显式设置 Content-Type，即使请求体为空
+            contentType(ContentType.Application.Json)
+        }
     }
 
     suspend fun rejectMember(memberId: Int): HttpResponse {
-        return client.post("$BASE_URL/space/members/reject/$memberId")
+        val url = "${BASE_URL}space/members/reject/$memberId"
+        println("[DEBUG ApiService] rejectMember URL: $url")
+        return client.post(url)
     }
 
     suspend fun removeMember(memberId: Int): HttpResponse {
-        return client.delete("$BASE_URL/space/members/$memberId")
+        return client.delete("${BASE_URL}space/members/$memberId")
     }
 
     suspend fun leaveSpace(spaceId: Int, userId: Int): HttpResponse {

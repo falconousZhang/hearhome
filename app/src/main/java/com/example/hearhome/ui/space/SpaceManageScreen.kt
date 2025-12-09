@@ -200,11 +200,13 @@ fun SpaceManageScreen(
                     MemberRequestCard(
                         memberInfo = memberInfo,
                         onApprove = {
+                            println("[DEBUG SpaceManageScreen] Approve button clicked for member ${memberInfo.member.id}")
                             scope.launch {
                                 viewModel.approveMember(memberInfo.member.id)
                             }
                         },
                         onReject = {
+                            println("[DEBUG SpaceManageScreen] Reject button clicked for member ${memberInfo.member.id}")
                             scope.launch {
                                 viewModel.rejectMember(memberInfo.member.id)
                             }
