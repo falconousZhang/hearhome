@@ -1,9 +1,14 @@
 package com.example.hearhome.ui.space
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.local.*
+import com.example.hearhome.data.remote.ApiService
+import com.example.hearhome.data.remote.ApiSpacePost
+import io.ktor.client.call.body
+import io.ktor.client.statement.bodyAsText
 import com.example.hearhome.model.AttachmentType
 import com.example.hearhome.model.ResolvedAttachment
 import com.example.hearhome.utils.AudioUtils
@@ -13,6 +18,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import org.json.JSONArray
+import java.io.File
 
 /**
  * 空间动态 ViewModel
@@ -70,6 +76,11 @@ class SpacePostViewModel(
     // 收藏的动态列表
     private val _favoritePosts = MutableStateFlow<List<PostWithAuthorInfo>>(emptyList())
     val favoritePosts: StateFlow<List<PostWithAuthorInfo>> = _favoritePosts.asStateFlow()
+
+    init {
+        // 进入空间时先从服务器同步一次动态和作者信息
+        viewModelScope.launch { syncPostsFromServer() }
+    }
 
     // 选中的动态详情（从posts中获取）
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -132,33 +143,89 @@ class SpacePostViewModel(
         location: String? = null
     ): Long {
         return try {
-            // 注意：不再使用 images 字段，完全使用 MediaAttachment 表
-            // images 字段保留仅用于兼容旧数据
-            val post = SpacePost(
+            // 先上传图片附件，拿到可共享的 URL，再随帖子一并下发
+            val uploadedImageUrls = mutableListOf<String>()
+            val imageUriToRemote = mutableMapOf<String, String>()
+            val imageAttachments = attachments.filter { it.type == AttachmentType.IMAGE }
+            val ctx = context
+            if (ctx != null) {
+                imageAttachments.forEachIndexed { index, attachment ->
+                    val bytes = loadBytes(ctx, attachment.uri)
+                    if (bytes != null) {
+                        val resp = runCatching {
+                            ApiService.uploadImage(bytes, "post_${System.currentTimeMillis()}_${index}.jpg")
+                        }.getOrNull()
+                        if (resp != null && resp.status.value in 200..299) {
+                            val remoteUrl = runCatching {
+                                resp.body<Map<String, String>>()
+                            }.getOrNull()?.get("imageUrl")
+                                ?: runCatching {
+                                    // 兼容非标准 JSON 解析失败的情况
+                                    val raw = resp.bodyAsText()
+                                    // 粗略提取 "imageUrl":"..."
+                                    val regex = "\"imageUrl\"\\s*:\\s*\"([^\"]+)\"".toRegex()
+                                    regex.find(raw)?.groupValues?.getOrNull(1)
+                                }.getOrNull()
+                            if (!remoteUrl.isNullOrBlank()) {
+                                uploadedImageUrls.add(remoteUrl)
+                                imageUriToRemote[attachment.uri] = remoteUrl
+                            } else {
+                                println("[uploadImage] parse imageUrl failed, raw=${resp.bodyAsText()}")
+                            }
+                        } else {
+                            println("[uploadImage] status=${resp?.status?.value} resp=${resp?.bodyAsText()}")
+                        }
+                    }
+                }
+            }
+
+            // 如果图片全都上传失败，降级为纯文字动态（不写入本地路径，避免他人打不开）
+            val imagesJson = if (uploadedImageUrls.isNotEmpty()) {
+                JSONArray(uploadedImageUrls).toString()
+            } else null
+
+            // 先向服务器创建动态，保证其他成员可见
+            val apiPost = ApiSpacePost(
                 spaceId = spaceId,
                 authorId = currentUserId,
                 content = content,
-                images = null,  // 新动态不再填充此字段
-                location = location
+                images = imagesJson,
+                location = location,
+                timestamp = System.currentTimeMillis()
             )
+            val response = ApiService.createPost(apiPost)
 
-            val postId = spacePostDao.createPost(post)
+            val createdPost: ApiSpacePost? = if (response.status.value in 200..299) {
+                runCatching { response.body<ApiSpacePost>() }.getOrNull()
+            } else null
 
-            // 保存附件到统一的 MediaAttachment 表
+            val localPost = (createdPost ?: apiPost.copy(id = 0))
+                .toLocal()
+                .copy(authorId = currentUserId) // 确保作者ID一致
+
+            val postId = spacePostDao.insert(localPost)
+
+            // 保存附件到统一的 MediaAttachment 表（图片优先用远端 URL，便于重登/他端显示）
             if (postId > 0 && attachments.isNotEmpty()) {
-                val entities = attachments.map {
-                    MediaAttachment(
+                val entities = attachments.mapNotNull { att ->
+                    val finalUri = if (att.type == AttachmentType.IMAGE) {
+                        imageUriToRemote[att.uri]
+                    } else att.uri
+                    if (finalUri.isNullOrBlank()) null else MediaAttachment(
                         ownerType = AttachmentOwnerType.SPACE_POST,
-                        ownerId = postId.toInt(),
-                        type = it.type.name,
-                        uri = it.uri,
-                        duration = it.duration
+                        ownerId = (createdPost?.id ?: postId.toInt()),
+                        type = att.type.name,
+                        uri = finalUri,
+                        duration = att.duration
                     )
                 }
                 mediaAttachmentDao.insertAttachments(entities)
             }
 
-            postId
+            // 成功后再同步一次，确保列表最新
+            viewModelScope.launch { syncPostsFromServer() }
+
+            if (createdPost != null) createdPost.id.toLong() else postId
         } catch (e: Exception) {
             e.printStackTrace()
             -1L
@@ -312,6 +379,94 @@ class SpacePostViewModel(
             false
         }
     }
+
+    private suspend fun syncPostsFromServer() {
+        try {
+            val remotePostsResponse = ApiService.getPosts(spaceId)
+            val remotePosts: List<ApiSpacePost> = runCatching { remotePostsResponse.body<List<ApiSpacePost>>() }.getOrElse { emptyList() }
+            if (remotePosts.isEmpty()) return
+
+            // 先存作者信息，避免显示未知用户
+            val authorIds = remotePosts.map { it.authorId }.distinct()
+            for (uid in authorIds) {
+                if (userDao.getUserById(uid) == null) {
+                    try {
+                        val profileResp = ApiService.getProfile(uid)
+                        if (profileResp.status.value in 200..299) {
+                            val user = profileResp.body<User>()
+                            userDao.insert(user)
+                        }
+                    } catch (e: Exception) {
+                        println("[ERROR] syncPostsFromServer: fetch user $uid failed: ${e.message}")
+                    }
+                }
+            }
+
+            // 写入帖子
+            for (apiPost in remotePosts) {
+                spacePostDao.insert(apiPost.toLocal())
+
+                // 把服务端 images 字段转换成本地附件，保证换设备/重登仍能看到图片
+                val imageUrls = parseImages(apiPost.images)
+                if (imageUrls.isNotEmpty()) {
+                    mediaAttachmentDao.deleteAttachments(AttachmentOwnerType.SPACE_POST, apiPost.id)
+                    val entities = imageUrls.map { url ->
+                        MediaAttachment(
+                            ownerType = AttachmentOwnerType.SPACE_POST,
+                            ownerId = apiPost.id,
+                            type = AttachmentType.IMAGE.name,
+                            uri = url
+                        )
+                    }
+                    mediaAttachmentDao.insertAttachments(entities)
+                }
+            }
+        } catch (e: Exception) {
+            println("[ERROR] syncPostsFromServer failed: ${e.message}")
+        }
+    }
+
+    private fun ApiSpacePost.toLocal(): SpacePost =
+        SpacePost(
+            id = this.id,
+            spaceId = this.spaceId,
+            authorId = this.authorId,
+            content = this.content,
+            images = this.images,
+            location = this.location,
+            timestamp = this.timestamp,
+            likeCount = this.likeCount,
+            commentCount = this.commentCount,
+            status = this.status
+        )
+
+    private fun loadBytes(ctx: Context, uriString: String): ByteArray? {
+        return runCatching {
+            val uri = Uri.parse(uriString)
+            ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: File(uriString).takeIf { it.exists() }?.readBytes()
+        }.getOrNull()
+    }
+
+    private fun parseImages(images: String?): List<String> {
+        if (images.isNullOrBlank()) return emptyList()
+        val trimmed = images.trim()
+        return if (trimmed.startsWith("[")) {
+            runCatching {
+                val arr = JSONArray(trimmed)
+                buildList {
+                    for (i in 0 until arr.length()) {
+                        val raw = arr.optString(i)
+                        val cleaned = raw.trim().trim('"')
+                        if (cleaned.isNotEmpty()) add(cleaned)
+                    }
+                }
+            }.getOrElse { parseCommaSeparatedImages(trimmed) }
+        } else parseCommaSeparatedImages(trimmed)
+    }
+
+    private fun parseCommaSeparatedImages(value: String): List<String> =
+        value.split(",").map { it.trim().trim('"') }.filter { it.isNotEmpty() }
 
     /**
      * 删除评论
