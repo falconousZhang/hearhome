@@ -67,6 +67,17 @@ data class ApiSpace(
 )
 
 @Serializable
+data class ApiSpaceMember(
+    val id: Int = 0,
+    val spaceId: Int,
+    val userId: Int,
+    val role: String = "member",
+    val nickname: String? = null,
+    val joinedAt: Long = System.currentTimeMillis(),
+    val status: String = "active"
+)
+
+@Serializable
 data class ApiSpacePost(
     val id: Int = 0,
     val spaceId: Int,
@@ -266,6 +277,10 @@ object ApiService {
             contentType(ContentType.Application.Json)
             setBody(request)
         }
+    }
+
+    suspend fun getSpaceMembers(spaceId: Int): List<ApiSpaceMember> {
+        return client.get("$BASE_URL/space/$spaceId/members").body()
     }
 
     // --- Space Post Functions ---

@@ -22,6 +22,9 @@ interface SpaceDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSpaceMembers(members: List<SpaceMember>)
 
+    @Query("DELETE FROM space_members WHERE spaceId = :spaceId")
+    suspend fun deleteMembersBySpace(spaceId: Int)
+
     @Query("DELETE FROM space_members WHERE userId = :userId AND status != 'pending'")
     suspend fun deleteAllSpaceMembersForUserExceptPending(userId: Int)
 
@@ -48,6 +51,14 @@ interface SpaceDao {
         if (spaces.isNotEmpty()) {
             insertSpaces(spaces)
         }
+        if (members.isNotEmpty()) {
+            insertSpaceMembers(members)
+        }
+    }
+
+    @Transaction
+    suspend fun replaceMembersForSpace(spaceId: Int, members: List<SpaceMember>) {
+        deleteMembersBySpace(spaceId)
         if (members.isNotEmpty()) {
             insertSpaceMembers(members)
         }

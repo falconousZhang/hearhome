@@ -3,9 +3,11 @@ package com.example.hearhome.ui.space
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.SpaceRepository
+import com.example.hearhome.data.toLocalSpaceMember
 import com.example.hearhome.data.local.*
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.data.remote.ApiSpacePost
+import com.example.hearhome.data.remote.ApiSpaceMember
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
@@ -151,6 +153,8 @@ class SpaceViewModel(
             } catch (e: Exception) {
                 println("[DEBUG SpaceViewModel] Failed to refresh spaces: ${e.message}")
             }
+            // 同步该空间的成员列表，确保能看到待审核的其他用户
+            syncSpaceMembersFromServer(spaceId)
             
             val space = spaceDao.getSpaceById(spaceId)
             _currentSpace.value = space
@@ -229,6 +233,8 @@ class SpaceViewModel(
 
     private suspend fun loadPendingMembers(spaceId: Int) {
         println("[DEBUG SpaceViewModel] loadPendingMembers: Starting for spaceId=$spaceId")
+        // 先从服务器同步最新成员列表，确保能拿到其他用户的 pending 记录
+        syncSpaceMembersFromServer(spaceId)
         val pending = spaceDao.getPendingMembers(spaceId)
         println("[DEBUG SpaceViewModel] loadPendingMembers: Found ${pending.size} pending members")
         pending.forEach { member ->
@@ -263,6 +269,17 @@ class SpaceViewModel(
         }
         println("[DEBUG SpaceViewModel] loadPendingMembers: Final list has ${pendingInfoList.size} items")
         _pendingMembers.value = pendingInfoList
+    }
+
+    private suspend fun syncSpaceMembersFromServer(spaceId: Int) {
+        try {
+            val remoteMembers: List<ApiSpaceMember> = ApiService.getSpaceMembers(spaceId)
+            val localMembers = remoteMembers.map { it.toLocalSpaceMember() }
+            spaceDao.replaceMembersForSpace(spaceId, localMembers)
+            println("[DEBUG SpaceViewModel] syncSpaceMembersFromServer: synced ${localMembers.size} members for space $spaceId")
+        } catch (e: Exception) {
+            println("[ERROR SpaceViewModel] Failed to sync members from server: ${e.message}")
+        }
     }
 
     suspend fun dissolveSpace(spaceId: Int): DissolveSpaceResult {

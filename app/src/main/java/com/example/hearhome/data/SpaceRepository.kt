@@ -4,6 +4,7 @@ import com.example.hearhome.data.local.Space
 import com.example.hearhome.data.local.SpaceDao
 import com.example.hearhome.data.local.SpaceMember
 import com.example.hearhome.data.remote.ApiSpace
+import com.example.hearhome.data.remote.ApiSpaceMember
 import com.example.hearhome.data.remote.ApiSpacePost
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.data.remote.CreateSpaceRequest
@@ -233,6 +234,18 @@ fun ApiSpace.toLocalMember(currentUserId: Int, existingMember: SpaceMember? = nu
         status = this.userStatus ?: existingMember?.status ?: "active", // 优先使用服务器返回的状态
         nickname = existingMember?.nickname, // 保留本地昵称
         joinedAt = existingMember?.joinedAt ?: System.currentTimeMillis() // 保留本地加入时间
+    )
+}
+
+fun ApiSpaceMember.toLocalSpaceMember(): SpaceMember {
+    return SpaceMember(
+        id = this.id,
+        spaceId = this.spaceId,
+        userId = this.userId,
+        role = this.role,
+        nickname = this.nickname,
+        joinedAt = this.joinedAt,
+        status = this.status
     )
 }
 
