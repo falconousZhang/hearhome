@@ -749,11 +749,12 @@ fun PostCard(
             }
 
             // 图片附件展示
-            val legacyImagePaths = remember(post.images) {
-                parseLegacyImagePaths(post.images)
-            }
             val imageAttachments = postInfo.attachments.filter {
                 AttachmentType.fromStorage(it.type) == AttachmentType.IMAGE
+            }
+            val legacyImagePaths = remember(post.images, imageAttachments) {
+                // 新数据已经转成附件，不再重复用 legacy 字段，避免双份展示
+                if (imageAttachments.isEmpty()) parseLegacyImagePaths(post.images) else emptyList()
             }
             
             // 调试日志：帮助诊断图片加载问题

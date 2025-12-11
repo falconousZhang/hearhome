@@ -14,6 +14,7 @@ import com.example.hearhome.model.ResolvedAttachment
 import com.example.hearhome.utils.AudioUtils
 import com.example.hearhome.utils.ImageUtils
 import com.example.hearhome.utils.NotificationHelper
+import com.example.hearhome.ui.chat.ImageUploadResponse
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -143,6 +144,9 @@ class SpacePostViewModel(
         location: String? = null
     ): Long {
         return try {
+            // 必须有文字或图片，否则不发
+            if (content.isBlank() && attachments.isEmpty()) return -1L
+
             // 先上传图片附件，拿到可共享的 URL，再随帖子一并下发
             val uploadedImageUrls = mutableListOf<String>()
             val imageUriToRemote = mutableMapOf<String, String>()
@@ -157,15 +161,12 @@ class SpacePostViewModel(
                         }.getOrNull()
                         if (resp != null && resp.status.value in 200..299) {
                             val remoteUrl = runCatching {
-                                resp.body<Map<String, String>>()
-                            }.getOrNull()?.get("imageUrl")
-                                ?: runCatching {
-                                    // 兼容非标准 JSON 解析失败的情况
-                                    val raw = resp.bodyAsText()
-                                    // 粗略提取 "imageUrl":"..."
-                                    val regex = "\"imageUrl\"\\s*:\\s*\"([^\"]+)\"".toRegex()
-                                    regex.find(raw)?.groupValues?.getOrNull(1)
-                                }.getOrNull()
+                                resp.body<ImageUploadResponse>().imageUrl
+                            }.getOrElse {
+                                // 兼容老格式 {"imageUrl":"xxx"}
+                                runCatching { resp.body<Map<String, String>>() }.getOrNull()?.get("imageUrl")
+                            }
+
                             if (!remoteUrl.isNullOrBlank()) {
                                 uploadedImageUrls.add(remoteUrl)
                                 imageUriToRemote[attachment.uri] = remoteUrl
@@ -175,14 +176,19 @@ class SpacePostViewModel(
                         } else {
                             println("[uploadImage] status=${resp?.status?.value} resp=${resp?.bodyAsText()}")
                         }
+                    } else {
+                        println("[uploadImage] loadBytes failed for ${attachment.uri}")
                     }
                 }
             }
 
-            // 如果图片全都上传失败，降级为纯文字动态（不写入本地路径，避免他人打不开）
-            val imagesJson = if (uploadedImageUrls.isNotEmpty()) {
-                JSONArray(uploadedImageUrls).toString()
-            } else null
+            // 聊天同款策略：带图必须上传成功，否则终止发送；无图则允许纯文字
+            if (imageAttachments.isNotEmpty() && uploadedImageUrls.isEmpty()) {
+                println("[createPost] all image uploads failed, abort")
+                return -1L
+            }
+
+            val imagesJson = if (uploadedImageUrls.isNotEmpty()) JSONArray(uploadedImageUrls).toString() else null
 
             // 先向服务器创建动态，保证其他成员可见
             val apiPost = ApiSpacePost(
@@ -442,9 +448,17 @@ class SpacePostViewModel(
 
     private fun loadBytes(ctx: Context, uriString: String): ByteArray? {
         return runCatching {
+            // 先直接按文件路径读取（适配我们内部存储下的绝对路径）
+            val asFile = File(uriString)
+            if (asFile.exists()) {
+                return@runCatching asFile.readBytes()
+            }
+
+            // 若不是文件路径，再尝试按 Uri 读取
             val uri = Uri.parse(uriString)
             ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: File(uriString).takeIf { it.exists() }?.readBytes()
+        }.onFailure {
+            println("[loadBytes] failed for $uriString : ${it.message}")
         }.getOrNull()
     }
 
