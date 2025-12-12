@@ -6,15 +6,15 @@ import com.example.hearhome.data.local.Couple
 import com.example.hearhome.data.local.Friend
 import com.example.hearhome.data.local.Message
 import com.example.hearhome.data.local.User
-import io.ktor.client.* 
-import io.ktor.client.engine.cio.* 
-import io.ktor.client.plugins.contentnegotiation.* 
-import io.ktor.client.request.* 
+import io.ktor.client.*
+import io.ktor.client.engine.cio.*
+import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.request.*
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
-import io.ktor.client.statement.* 
-import io.ktor.http.* 
-import io.ktor.serialization.kotlinx.json.* 
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import io.ktor.serialization.kotlinx.json.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import io.ktor.client.call.body
@@ -30,8 +30,8 @@ data class FriendRequest(val senderId: Int, val receiverId: Int)
 
 @Serializable
 data class JoinSpaceRequest(
-    val userId: Int, 
-    val inviteCode: String, 
+    val userId: Int,
+    val inviteCode: String,
     val nickname: String? = null // MODIFIED: Added nickname based on server code
 )
 
@@ -159,14 +159,14 @@ object ApiService {
     // ============================ 忘记密码流程 ============================
 
     /** Step1：获取密保问题 */
-    suspend fun fetchResetQuestion(email: String): HttpResponse = 
+    suspend fun fetchResetQuestion(email: String): HttpResponse =
         client.post("$BASE_URL/users/reset-question") {
             contentType(ContentType.Application.Json)
             setBody(ResetQuestionRequest(email.trim()))
         }
 
     /** Step3：提交答案 + 新密码 */
-    suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse = 
+    suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse =
         client.post("$BASE_URL/users/reset-password") {
             contentType(ContentType.Application.Json)
             setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword))
@@ -179,7 +179,7 @@ object ApiService {
         oldPassword: String,
         securityAnswer: String,
         newPassword: String
-    ): HttpResponse = 
+    ): HttpResponse =
         client.post("$BASE_URL/users/update-password") {
             contentType(ContentType.Application.Json)
             setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword))
@@ -191,10 +191,10 @@ object ApiService {
         password: String,
         question: String,
         answer: String
-    ): HttpResponse = 
+    ): HttpResponse =
         client.post("$BASE_URL/users/update-security-question") {
             contentType(ContentType.Application.Json)
-             setBody(UpdateSecurityQuestionRequest(email, password, question, answer))
+            setBody(UpdateSecurityQuestionRequest(email, password, question, answer))
         }
 
     suspend fun register(user: User): HttpResponse {
@@ -356,7 +356,7 @@ object ApiService {
     suspend fun breakupCouple(userId: Int): HttpResponse {
         return client.delete("$BASE_URL/couples/$userId")
     }
-    
+
     // --- Space Member Management Functions ---
 
     suspend fun approveMember(memberId: Int): HttpResponse {
@@ -487,8 +487,35 @@ object ApiService {
     }
 
     // --- Space Check-In Interval Functions ---
+    /***********************************wdz********************************************
+     * 解散空间
+     */
+    suspend fun dissolveSpace(spaceId: Int, userId: Int): HttpResponse {
+        return client.delete("$BASE_URL/space/$spaceId") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("userId" to userId))
+        }
+    }
 
     /**
+     * 邀请好友加入空间
+     */
+    suspend fun inviteFriendToSpace(
+        spaceId: Int,
+        inviterId: Int,
+        friendId: Int
+    ): HttpResponse {
+        return client.post("$BASE_URL/space/$spaceId/invite") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                mapOf(
+                    "inviterId" to inviterId,
+                    "friendId" to friendId
+                )
+            )
+        }
+    }
+    /*********************************************************wdz********************
      * 更新空间的打卡间隔时间
      */
     suspend fun updateSpaceCheckInInterval(spaceId: Int, checkInIntervalSeconds: Long): HttpResponse {

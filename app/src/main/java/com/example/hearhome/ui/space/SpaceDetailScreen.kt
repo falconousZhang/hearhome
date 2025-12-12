@@ -85,10 +85,10 @@ fun SpaceDetailScreen(
     val spaceMembers by spaceViewModel.spaceMembers.collectAsState()
     val scope = rememberCoroutineScope()
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
-    
+
     // 用户待处理的@提醒的postId列表（用于置顶）
     var pendingMentionPostIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
-    
+
     // 加载用户在该空间的待处理@提醒
     LaunchedEffect(spaceId, currentUserId) {
         withContext(Dispatchers.IO) {
@@ -105,7 +105,7 @@ fun SpaceDetailScreen(
             }
         }
     }
-    
+
     // 对帖子进行排序：被@且pending的帖子置顶
     val sortedPosts = remember(posts, pendingMentionPostIds) {
         posts.sortedWith(compareBy(
@@ -115,7 +115,7 @@ fun SpaceDetailScreen(
             { -it.post.timestamp }
         ))
     }
-    
+
     // DEBUG: 打印当前角色（用于调试）
     LaunchedEffect(currentUserRole) {
         println("[DEBUG SpaceDetailScreen] currentUserRole=$currentUserRole, isAdmin=$isAdmin")
@@ -194,7 +194,28 @@ fun SpaceDetailScreen(
                                     }
                                 )
                             }
+                            // ... 前面已有的菜单------------------------wdz
+
+                            if (currentUserRole != "owner") {
+                                DropdownMenuItem(
+                                    text = { Text("退出空间") },
+                                    onClick = {
+                                        showMoreMenu = false
+                                        // 这里直接调用 ViewModel 的 leaveSpace
+                                        spaceViewModel.leaveSpace(spaceId)
+
+                                        // 退出成功后，SpaceViewModel 会 refreshMySpaces()
+                                        // 这边可以直接导航回主页
+                                        navController.popBackStack(
+                                            route = "home/$currentUserId",
+                                            inclusive = false
+                                        )
+                                    }
+                                )
+                            }
+
                             Divider()
+
                             DropdownMenuItem(
                                 text = { Text("纪念日") },
                                 onClick = {
@@ -202,6 +223,7 @@ fun SpaceDetailScreen(
                                     navController.navigate("anniversary/$spaceId/$currentUserId")
                                 }
                             )
+// ... ------------------------wdz
                         }
                     }
                 }
@@ -229,16 +251,16 @@ fun SpaceDetailScreen(
                 )
             }
             // 空间信息（含打卡状态）
-            item { 
+            item {
                 currentSpace?.let { space ->
                     SpaceInfoCard(
                         space = space,
                         currentUserId = currentUserId,
                         spaceDao = db.spaceDao()
                     )
-                } 
+                }
             }
-            
+
             // 打卡统计卡片（仅当启用了打卡功能时显示）
             if (currentSpace?.checkInIntervalSeconds ?: 0 > 0) {
                 item {
@@ -518,7 +540,7 @@ fun SpaceInfoCard(
     var checkInStatus by remember { mutableStateOf<String?>(null) }
     var remainingSeconds by remember { mutableStateOf(-1L) }
     var needsCheckIn by remember { mutableStateOf(false) }
-    
+
     // 每秒更新打卡状态
     LaunchedEffect(space.id, space.checkInIntervalSeconds) {
         if (space.checkInIntervalSeconds > 0) {
@@ -538,7 +560,7 @@ fun SpaceInfoCard(
             }
         }
     }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -566,7 +588,7 @@ fun SpaceInfoCard(
                 Spacer(Modifier.height(8.dp))
                 Text(it, style = MaterialTheme.typography.bodyMedium)
             }
-            
+
             // 打卡状态显示（实时倒计时）
             if (space.checkInIntervalSeconds > 0) {
                 Spacer(Modifier.height(8.dp))
@@ -575,9 +597,9 @@ fun SpaceInfoCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
-                            color = if (needsCheckIn) 
+                            color = if (needsCheckIn)
                                 MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                            else 
+                            else
                                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
                             shape = MaterialTheme.shapes.small
                         )
@@ -593,7 +615,7 @@ fun SpaceInfoCard(
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(4.dp))
-                    
+
                     if (needsCheckIn) {
                         Text(
                             text = "需要打卡！请发布动态",
@@ -619,7 +641,7 @@ fun SpaceInfoCard(
                     }
                 }
             }
-            
+
             Spacer(Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -647,7 +669,7 @@ fun PostCard(
 ) {
     val post = postInfo.post
     val author = postInfo.author
-    
+
     // 高亮边框颜色
     val borderModifier = if (isPendingMention) {
         Modifier.border(
@@ -705,7 +727,7 @@ fun PostCard(
                     }
                 }
             }
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -756,10 +778,10 @@ fun PostCard(
                 // 新数据已经转成附件，不再重复用 legacy 字段，避免双份展示
                 if (imageAttachments.isEmpty()) parseLegacyImagePaths(post.images) else emptyList()
             }
-            
+
             // 调试日志：帮助诊断图片加载问题
             if (imageAttachments.isNotEmpty() || legacyImagePaths.isNotEmpty()) {
-                android.util.Log.d("PostCard", 
+                android.util.Log.d("PostCard",
                     "Post ${post.id}: ${imageAttachments.size} attachments, ${legacyImagePaths.size} legacy paths"
                 )
                 imageAttachments.forEach { att ->
@@ -769,7 +791,7 @@ fun PostCard(
                     android.util.Log.d("PostCard", "  Legacy: $path")
                 }
             }
-            
+
             val hasImageAttachments = imageAttachments.isNotEmpty() || legacyImagePaths.isNotEmpty()
             if (hasImageAttachments) {
                 Spacer(Modifier.height(12.dp))
@@ -809,7 +831,7 @@ fun PostCard(
                     )
                 }
             }
-            
+
             // 提醒状态显示
             PostMentionStatusView(
                 postId = post.id,
@@ -864,7 +886,7 @@ fun CreatePostScreen(
     var hours by remember { mutableStateOf("") }
     var minutes by remember { mutableStateOf("") }
     var seconds by remember { mutableStateOf("") }
-    
+
     // 过滤掉当前用户
     val selectableMembers = spaceMembers.filter { it.user.uid != currentUserId }
 
@@ -892,11 +914,11 @@ fun CreatePostScreen(
                     onAttachmentsChange = { attachments = it },
                     enableTestTools = true
                 )
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 // @提醒功能入口
                 OutlinedButton(
                     onClick = { showMentionSettings = !showMentionSettings },
@@ -905,11 +927,11 @@ fun CreatePostScreen(
                     Icon(Icons.Default.Notifications, contentDescription = null)
                     Spacer(Modifier.width(4.dp))
                     Text(
-                        if (selectedUserIds.isEmpty()) "@提醒某人查看" 
+                        if (selectedUserIds.isEmpty()) "@提醒某人查看"
                         else "@已选择 ${selectedUserIds.size} 人"
                     )
                 }
-                
+
                 // 提醒设置展开区域
                 if (showMentionSettings) {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -926,7 +948,7 @@ fun CreatePostScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(Modifier.height(8.dp))
-                            
+
                             // 成员选择列表
                             LazyColumn(
                                 modifier = Modifier.heightIn(max = 150.dp)
@@ -962,7 +984,7 @@ fun CreatePostScreen(
                                     }
                                 }
                             }
-                            
+
                             if (selectedUserIds.isNotEmpty()) {
                                 Spacer(Modifier.height(12.dp))
                                 Text(
@@ -971,7 +993,7 @@ fun CreatePostScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(Modifier.height(8.dp))
-                                
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -979,7 +1001,7 @@ fun CreatePostScreen(
                                 ) {
                                     OutlinedTextField(
                                         value = hours,
-                                        onValueChange = { 
+                                        onValueChange = {
                                             if (it.isEmpty() || it.all { char -> char.isDigit() }) {
                                                 hours = it
                                             }
@@ -993,7 +1015,7 @@ fun CreatePostScreen(
                                     Text(":")
                                     OutlinedTextField(
                                         value = minutes,
-                                        onValueChange = { 
+                                        onValueChange = {
                                             if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
                                                 minutes = it
                                             }
@@ -1007,7 +1029,7 @@ fun CreatePostScreen(
                                     Text(":")
                                     OutlinedTextField(
                                         value = seconds,
-                                        onValueChange = { 
+                                        onValueChange = {
                                             if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
                                                 seconds = it
                                             }
@@ -1019,7 +1041,7 @@ fun CreatePostScreen(
                                         singleLine = true
                                     )
                                 }
-                                
+
                                 Text(
                                     "提示：如果被提醒人在此时间内未查看，将收到弹窗提醒",
                                     style = MaterialTheme.typography.bodySmall,
@@ -1034,7 +1056,7 @@ fun CreatePostScreen(
         },
         confirmButton = {
             Button(
-                onClick = { 
+                onClick = {
                     if (content.isNotBlank() || attachments.isNotEmpty()) {
                         val h = hours.toLongOrNull() ?: 0
                         val m = minutes.toLongOrNull() ?: 0
@@ -1098,22 +1120,22 @@ fun PostMentionStatusView(
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
     val mentions by db.postMentionDao().getMentionsWithUserInfo(postId).collectAsState(initial = emptyList())
-    
+
     // 管理对话框状态
     var showManageDialog by remember { mutableStateOf(false) }
     // 触发刷新的计数器
     var refreshTrigger by remember { mutableIntStateOf(0) }
-    
+
     // 当前时间状态，每秒更新一次
     // 使用 derivedStateOf 确保始终使用最新时间
     var currentTime by remember { mutableStateOf(System.currentTimeMillis()) }
-    
+
     // 每秒更新当前时间（始终启用以确保倒计时准确）
     val hasUnviewedMentions = mentions.any { it.viewedAt == null && it.status == "pending" }
     LaunchedEffect(hasUnviewedMentions, refreshTrigger) {
         // 首次加载或刷新时立即更新时间
         currentTime = System.currentTimeMillis()
-        
+
         if (hasUnviewedMentions) {
             while (true) {
                 delay(1000) // 每秒更新
@@ -1121,37 +1143,37 @@ fun PostMentionStatusView(
             }
         }
     }
-    
+
     // 只有发布者或被提醒人可以看到提醒状态
     val canViewMentions = currentUserId == authorId || mentions.any { it.mentionedUserId == currentUserId }
     val isCurrentUserMentioned = mentions.any { it.mentionedUserId == currentUserId }
     val currentUserMention = mentions.find { it.mentionedUserId == currentUserId }
     val isAuthor = currentUserId == authorId
-    
+
     // 显示管理对话框
     if (showManageDialog && isAuthor) {
         com.example.hearhome.ui.components.MentionManageDialog(
             postId = postId,
             currentUserId = currentUserId,
             onDismiss = { showManageDialog = false },
-            onMentionsChanged = { 
+            onMentionsChanged = {
                 // 提醒已更改，触发刷新并立即更新时间
                 refreshTrigger++
                 currentTime = System.currentTimeMillis()
             }
         )
     }
-    
+
     if (mentions.isNotEmpty() && canViewMentions) {
         Spacer(Modifier.height(8.dp))
-        
+
         // 如果当前用户被@，使用高亮显示
         val containerColor = if (isCurrentUserMentioned && currentUserMention?.status == "pending") {
             MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f) // 高亮
         } else {
             MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
         }
-        
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = containerColor)
@@ -1167,11 +1189,11 @@ fun PostMentionStatusView(
                             Icons.Default.Notifications,
                             contentDescription = null,
                             modifier = Modifier.size(16.dp),
-                            tint = if (isCurrentUserMentioned) MaterialTheme.colorScheme.error 
-                                   else MaterialTheme.colorScheme.secondary
+                            tint = if (isCurrentUserMentioned) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.secondary
                         )
                         Spacer(Modifier.width(4.dp))
-                        
+
                         // 优化文案：如果当前用户被@，显示"提醒了你和其他x人"
                         val mentionText = if (isCurrentUserMentioned) {
                             val otherCount = mentions.size - 1
@@ -1183,16 +1205,16 @@ fun PostMentionStatusView(
                         } else {
                             "提醒了 ${mentions.size} 人查看"
                         }
-                        
+
                         Text(
                             text = mentionText,
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (isCurrentUserMentioned) MaterialTheme.colorScheme.error
-                                   else MaterialTheme.colorScheme.secondary
+                            else MaterialTheme.colorScheme.secondary
                         )
                     }
-                    
+
                     // 作者才显示管理按钮
                     if (isAuthor && mentions.any { it.status == "pending" }) {
                         IconButton(
@@ -1210,7 +1232,7 @@ fun PostMentionStatusView(
                 }
 
                 Spacer(Modifier.height(8.dp))
-                
+
                 mentions.forEach { mention ->
                     Row(
                         modifier = Modifier
@@ -1225,13 +1247,13 @@ fun PostMentionStatusView(
                                 .background(Color((mention.avatarColor ?: "#CCCCCC").toColorInt()))
                         )
                         Spacer(Modifier.width(8.dp))
-                        
+
                         Text(
                             text = mention.nickname ?: "未知用户",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.weight(1f)
                         )
-                        
+
                         // 查看状态
                         when (mention.status) {
                             "viewed" -> {
@@ -1269,14 +1291,14 @@ fun PostMentionStatusView(
                             else -> {
                                 // pending 或其他状态，显示剩余时间或已超时（使用 hh:mm:ss 格式）
                                 val timeoutMillis = mention.createdAt + mention.timeoutSeconds * 1000
-                                
+
                                 if (currentTime < timeoutMillis) {
                                     val remainingSeconds = (timeoutMillis - currentTime) / 1000
                                     Text(
                                         text = formatCountdownHHMMSS(remainingSeconds),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (remainingSeconds < 60) MaterialTheme.colorScheme.error 
-                                               else MaterialTheme.colorScheme.outline,
+                                        color = if (remainingSeconds < 60) MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.outline,
                                         fontWeight = if (remainingSeconds < 60) FontWeight.Bold else FontWeight.Normal
                                     )
                                 } else {
@@ -1319,12 +1341,12 @@ private fun formatCountdownHHMMSS(totalSeconds: Long): String {
  */
 private fun formatCheckInCountdownDetail(seconds: Long): String {
     if (seconds <= 0) return "00:00:00"
-    
+
     val days = seconds / 86400
     val hours = (seconds % 86400) / 3600
     val minutes = (seconds % 3600) / 60
     val secs = seconds % 60
-    
+
     return if (days > 0) {
         String.format("%d天 %02d:%02d:%02d", days, hours, minutes, secs)
     } else {
@@ -1348,7 +1370,7 @@ fun CheckInStatsCard(
     var allStats by remember { mutableStateOf<List<com.example.hearhome.data.local.CheckInStat>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var showHistory by remember { mutableStateOf(false) }
-    
+
     // 获取当前月份的起止时间
     val calendar = Calendar.getInstance()
     val currentMonthStart = calendar.apply {
@@ -1362,9 +1384,9 @@ fun CheckInStatsCard(
         add(Calendar.MONTH, 1)
         add(Calendar.MILLISECOND, -1)
     }.timeInMillis
-    
+
     var monthlyPostCount by remember { mutableStateOf(0) }
-    
+
     LaunchedEffect(spaceId) {
         withContext(Dispatchers.IO) {
             myPostCount = spacePostDao.getPostCountByUser(spaceId, currentUserId)
@@ -1376,7 +1398,7 @@ fun CheckInStatsCard(
             isLoading = false
         }
     }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -1403,12 +1425,12 @@ fun CheckInStatsCard(
                         fontWeight = FontWeight.Bold
                     )
                 }
-                
+
                 TextButton(onClick = { showHistory = !showHistory }) {
                     Text(if (showHistory) "收起" else "查看历史")
                 }
             }
-            
+
             if (isLoading) {
                 Box(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -1418,7 +1440,7 @@ fun CheckInStatsCard(
                 }
             } else {
                 Spacer(Modifier.height(8.dp))
-                
+
                 // 统计概览
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1443,19 +1465,19 @@ fun CheckInStatsCard(
                         icon = Icons.Default.EmojiEvents
                     )
                 }
-                
+
                 // 展开历史记录
                 if (showHistory) {
                     Spacer(Modifier.height(12.dp))
                     HorizontalDivider()
                     Spacer(Modifier.height(12.dp))
-                    
+
                     Text(
                         text = "最近打卡记录",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )
-                    
+
                     if (recentPosts.isEmpty()) {
                         Text(
                             text = "暂无打卡记录",
@@ -1484,29 +1506,29 @@ fun CheckInStatsCard(
                             }
                         }
                     }
-                    
+
                     // 空间成员打卡排行
                     if (allStats.size > 1) {
                         Spacer(Modifier.height(12.dp))
                         HorizontalDivider()
                         Spacer(Modifier.height(12.dp))
-                        
+
                         Text(
                             text = "成员打卡排行",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold
                         )
-                        
+
                         allStats.take(5).forEachIndexed { index, stat ->
                             var userName by remember { mutableStateOf("加载中...") }
-                            
+
                             LaunchedEffect(stat.authorId) {
                                 withContext(Dispatchers.IO) {
                                     val user = userDao.getUserById(stat.authorId)
                                     userName = user?.nickname ?: "用户${stat.authorId}"
                                 }
                             }
-                            
+
                             Spacer(Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
