@@ -14,6 +14,8 @@ import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
+
+
 /**
  * 空间管理 ViewModel
  * [MODIFIED] 现在使用 SpaceRepository 来处理所有网络操作
@@ -48,7 +50,7 @@ class SpaceViewModel(
     // --- Original Properties (unchanged) ---
     private val _currentSpace = MutableStateFlow<Space?>(null)
     val currentSpace: StateFlow<Space?> = _currentSpace.asStateFlow()
-    
+
     // 当前选中的空间ID，用于观察空间变化
     private val _selectedSpaceId = MutableStateFlow<Int?>(null)
 
@@ -63,7 +65,7 @@ class SpaceViewModel(
 
     init {
         refreshMySpaces()
-        
+
         // 观察当前选中空间的变化（通过 Flow 实时更新）
         viewModelScope.launch {
             _selectedSpaceId.filterNotNull().flatMapLatest { spaceId ->
@@ -115,7 +117,7 @@ class SpaceViewModel(
         _isLoading.value = false
         return result
     }
-    
+
     /**
      * [ADDED] Sends a new message in the current space.
      */
@@ -145,7 +147,7 @@ class SpaceViewModel(
     fun selectSpace(spaceId: Int) {
         // 设置选中的空间ID，触发 Flow 观察
         _selectedSpaceId.value = spaceId
-        
+
         viewModelScope.launch {
             // 先从远程服务器刷新空间数据，确保成员状态是最新的
             try {
@@ -155,18 +157,18 @@ class SpaceViewModel(
             }
             // 同步该空间的成员列表，确保能看到待审核的其他用户
             syncSpaceMembersFromServer(spaceId)
-            
+
             val space = spaceDao.getSpaceById(spaceId)
             _currentSpace.value = space
 
             if (space != null) {
                 // 先加载当前用户的角色（重要，必须优先加载）
                 loadCurrentUserRole(spaceId)
-                
+
                 // 加载消息、成员列表
                 loadSpaceMessages(space.id)
                 loadSpaceMembers(spaceId)
-                
+
                 // 获取已更新的角色值
                 val role = _currentUserRole.value
                 println("[DEBUG SpaceViewModel selectSpace] After loading, role=$role")
@@ -214,14 +216,14 @@ class SpaceViewModel(
         val member = spaceDao.getSpaceMember(spaceId, currentUserId)
         val roleFromDb = member?.role
         _currentUserRole.value = roleFromDb
-        
+
         // 详细诊断日志
         println("[DEBUG SpaceViewModel] ========== loadCurrentUserRole Diagnostic ==========")
         println("[DEBUG SpaceViewModel] Query: spaceId=$spaceId, userId=$currentUserId")
         println("[DEBUG SpaceViewModel] Result: member=$member")
         println("[DEBUG SpaceViewModel] Result: roleFromDb=$roleFromDb")
         println("[DEBUG SpaceViewModel] Result: _currentUserRole.value=${_currentUserRole.value}")
-        
+
         // 列出该空间的所有成员以验证数据
         val allMembers = spaceDao.getSpaceMembers(spaceId)
         println("[DEBUG SpaceViewModel] All members in space $spaceId:")
@@ -240,7 +242,7 @@ class SpaceViewModel(
         pending.forEach { member ->
             println("[DEBUG SpaceViewModel] loadPendingMembers: pending member userId=${member.userId}, role=${member.role}, status=${member.status}")
         }
-        
+
         val pendingInfoList = pending.mapNotNull { member ->
             var user = userDao.getUserById(member.userId)
             if (user == null) {
@@ -261,7 +263,7 @@ class SpaceViewModel(
                     println("[ERROR SpaceViewModel] loadPendingMembers: Failed to fetch user ${member.userId} from API: ${e.message}")
                 }
             }
-            
+
             user?.let { u ->
                 println("[DEBUG SpaceViewModel] loadPendingMembers: Mapping pending member userId=${member.userId} to user ${u.nickname}")
                 SpaceMemberInfo(member, u)
@@ -281,13 +283,77 @@ class SpaceViewModel(
             println("[ERROR SpaceViewModel] Failed to sync members from server: ${e.message}")
         }
     }
-
+    /******************wdz******/
     suspend fun dissolveSpace(spaceId: Int): DissolveSpaceResult {
-        // TODO: Refactor to call repository.dissolveSpace(spaceId)
-        refreshMySpaces()
-        return DissolveSpaceResult.Failure("Not implemented for online mode yet.")
+        return try {
+            val response = ApiService.dissolveSpace(spaceId, currentUserId)
+            val body = response.bodyAsText()
+
+            if (response.status == HttpStatusCode.OK) {
+                // 解散成功后刷新本地空间列表
+                refreshMySpaces()
+                DissolveSpaceResult.Success("空间已解散")
+            } else {
+                // 尝试把后端 message 抛给用户
+                val message = if (body.isNotBlank()) body else "解散失败：${response.status.value}"
+                DissolveSpaceResult.Failure(message)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            DissolveSpaceResult.Failure("解散失败: ${e.message}")
+        }
+    }
+    /******************wdz******/
+    fun inviteFriendToSpace(spaceId: Int, friendUserId: Int) {
+        viewModelScope.launch {
+            try {
+                val response = ApiService.inviteFriendToSpace(
+                    spaceId = spaceId,
+                    inviterId = currentUserId,
+                    friendId = friendUserId
+                )
+                val responseBody = response.bodyAsText()
+
+                when (response.status) {
+                    HttpStatusCode.OK, HttpStatusCode.Created -> {
+                        // 邀请成功：直接和服务器同步成员列表，再刷新本地 UI
+                        syncSpaceMembersFromServer(spaceId)
+                        loadSpaceMembers(spaceId)
+                    }
+
+                    HttpStatusCode.Conflict -> {
+                        // 一般是“已经在空间中 / 已被邀请”等
+                        _error.value = responseBody.ifBlank { "该用户已在空间中或已被邀请" }
+                        // 保险起见，同步一次，避免本地状态过旧
+                        syncSpaceMembersFromServer(spaceId)
+                        loadSpaceMembers(spaceId)
+                    }
+
+                    HttpStatusCode.NotFound -> {
+                        // 空间不存在 或 用户不存在
+                        _error.value = responseBody.ifBlank { "邀请失败：空间或用户不存在" }
+                        // 只刷新本地显示
+                        _currentSpace.value?.id?.let { currentSpaceId ->
+                            if (currentSpaceId == spaceId) {
+                                loadSpaceMembers(currentSpaceId)
+                            }
+                        }
+                    }
+
+                    else -> {
+                        _error.value =
+                            "邀请失败: ${responseBody.ifBlank { response.status.toString() }}"
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _error.value = "邀请失败: ${e.message}"
+            }
+        }
     }
 
+
+    /******************wdz******/
     fun approveMember(memberId: Int) {
         viewModelScope.launch {
             try {
@@ -296,16 +362,16 @@ class SpaceViewModel(
                 val responseBody = response.bodyAsText()
                 println("[DEBUG SpaceViewModel] approveMember response status: ${response.status}")
                 println("[DEBUG SpaceViewModel] approveMember response body: $responseBody")
-                
+
                 when (response.status) {
                     HttpStatusCode.OK -> {
                         println("[DEBUG SpaceViewModel] Approval successful, response: $responseBody")
-                        
+
                         // 如果后端返回成功，直接在本地数据库中更新该成员状态为 active
                         // 注意：不能依赖 refreshSpaces()，因为它只同步当前用户的记录，不会同步其他用户的记录
                         spaceDao.updateMemberStatus(memberId, "active")
                         println("[DEBUG SpaceViewModel] Updated member status to active in local DB")
-                        
+
                         // 刷新待审核成员列表和正式成员列表
                         _currentSpace.value?.id?.let { spaceId ->
                             println("[DEBUG SpaceViewModel] Refreshing members for spaceId=$spaceId")
@@ -317,7 +383,7 @@ class SpaceViewModel(
                         // 成员不存在，从本地数据库删除该记录
                         println("[DEBUG SpaceViewModel] Member not found, deleting from local DB")
                         spaceDao.rejectMember(memberId)
-                        
+
                         // 刷新待审核成员列表
                         _currentSpace.value?.id?.let { spaceId ->
                             loadPendingMembers(spaceId)
@@ -346,15 +412,15 @@ class SpaceViewModel(
                 val responseBody = response.bodyAsText()
                 println("[DEBUG SpaceViewModel] rejectMember response status: ${response.status}")
                 println("[DEBUG SpaceViewModel] rejectMember response body: $responseBody")
-                
+
                 when (response.status) {
                     HttpStatusCode.OK -> {
                         // 直接在本地数据库中删除该成员记录
                         spaceDao.rejectMember(memberId)
                         println("[DEBUG SpaceViewModel] Deleted member from local DB")
-                        
+
                         // 刷新待审核成员列表
-                        _currentSpace.value?.id?.let { 
+                        _currentSpace.value?.id?.let {
                             println("[DEBUG SpaceViewModel] Refreshing pending members for spaceId=$it")
                             loadPendingMembers(it)
                         }
@@ -363,9 +429,9 @@ class SpaceViewModel(
                         // 成员不存在，从本地数据库删除该记录
                         println("[DEBUG SpaceViewModel] Member not found, deleting from local DB")
                         spaceDao.rejectMember(memberId)
-                        
+
                         // 刷新待审核成员列表
-                        _currentSpace.value?.id?.let { 
+                        _currentSpace.value?.id?.let {
                             loadPendingMembers(it)
                         }
                         _error.value = "该成员已被处理或不存在"
@@ -387,13 +453,29 @@ class SpaceViewModel(
         viewModelScope.launch {
             try {
                 val response = ApiService.removeMember(memberId)
-                if (response.status == HttpStatusCode.OK) {
-                    // 刷新成员列表
-                    _currentSpace.value?.id?.let { spaceId ->
-                        loadSpaceMembers(spaceId)
+                val responseBody = response.bodyAsText()
+
+                when (response.status) {
+                    HttpStatusCode.OK, HttpStatusCode.NoContent -> {
+                        // 先更新本地状态，确保UI立刻变更
+                        spaceDao.removeMember(memberId)
+                        // 再和服务器同步，防止状态不一致
+                        _currentSpace.value?.id?.let { spaceId ->
+                            syncSpaceMembersFromServer(spaceId)
+                            loadSpaceMembers(spaceId)
+                        }
                     }
-                } else {
-                    _error.value = "移除成员失败"
+                    HttpStatusCode.NotFound -> {
+                        // 如果服务器已无该成员，直接从本地删除，避免UI卡住
+                        spaceDao.rejectMember(memberId)
+                        _error.value = "该成员已被处理或不存在"
+                        _currentSpace.value?.id?.let { spaceId ->
+                            loadSpaceMembers(spaceId)
+                        }
+                    }
+                    else -> {
+                        _error.value = "移除成员失败: ${responseBody.ifBlank { response.status.toString() }}"
+                    }
                 }
             } catch (e: Exception) {
                 e.printStackTrace()

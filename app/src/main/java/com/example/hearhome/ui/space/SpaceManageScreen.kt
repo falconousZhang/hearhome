@@ -23,6 +23,15 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import com.example.hearhome.data.local.User
+import com.example.hearhome.data.local.Friend
+import com.example.hearhome.data.remote.ApiService
+import io.ktor.client.call.body
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import androidx.compose.foundation.clickable
 
 /**
  * 空间管理界面
@@ -37,7 +46,7 @@ fun SpaceManageScreen(
 ) {
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
-    
+
     // 使用 key 确保每个空间使用独立的 ViewModel 实例
     val viewModel: SpaceViewModel = viewModel(
         key = "space_manage_$spaceId",
@@ -48,7 +57,7 @@ fun SpaceManageScreen(
             currentUserId
         )
     )
-    
+
     val currentSpace by viewModel.currentSpace.collectAsState()
     val spaceMembers by viewModel.spaceMembers.collectAsState()
     val pendingMembers by viewModel.pendingMembers.collectAsState()
@@ -56,17 +65,18 @@ fun SpaceManageScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var showDissolveDialog by remember { mutableStateOf(false) }
-    
+    var showInviteDialog by remember { mutableStateOf(false) }
+
     // 情侣空间双方都是owner，都可以管理和解散
     val isCoupleSpace = currentSpace?.type == "couple"
     val isAdmin = currentUserRole == "admin" || currentUserRole == "owner"
     val canDissolve = currentUserRole == "owner"  // 情侣空间和其他空间的owner都可以解散
-    
+
     LaunchedEffect(spaceId) {
         println("[DEBUG SpaceManageScreen] LaunchedEffect: selecting spaceId=$spaceId")
         viewModel.selectSpace(spaceId)
     }
-    
+
     // 加载中状态
     if (currentUserRole == null) {
         Box(
@@ -77,8 +87,8 @@ fun SpaceManageScreen(
         }
         return
     }
-    
-        // 权限检查（管理员和所有者可访问）
+
+    // 权限检查（管理员和所有者可访问）
     if (!isAdmin) {
         Scaffold(
             topBar = {
@@ -121,7 +131,7 @@ fun SpaceManageScreen(
         }
         return
     }
-    
+
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
@@ -145,6 +155,7 @@ fun SpaceManageScreen(
             // 情侣空间不显示移除成员功能
             val canRemoveMembers = !isCoupleSpace
 
+
             // 空间信息
             item {
                 currentSpace?.let { space ->
@@ -160,11 +171,24 @@ fun SpaceManageScreen(
                             Text("类型: ${if (space.type == "couple") "情侣空间" else "家族空间"}")
                             Text("邀请码: ${space.inviteCode}")
                             Text("成员数: ${spaceMembers.size}")
+                            Text("成员数: ${spaceMembers.size}")
+
+                            Spacer(Modifier.height(8.dp))
+
+                            if (canRemoveMembers) { // 这里你已经有 canRemoveMembers = !isCoupleSpace
+                                Button(
+                                    onClick = { showInviteDialog = true },
+                                    modifier = Modifier.align(Alignment.End)
+                                ) {
+                                    Text("邀请好友加入空间")
+                                }
+                            }
+//wdz------------
                         }
                     }
                 }
             }
-            
+
             // 打卡设置（仅管理员可见）
             item {
                 currentSpace?.let { space ->
@@ -184,7 +208,8 @@ fun SpaceManageScreen(
                     )
                 }
             }
-            
+
+
             // 待审核成员
             if (pendingMembers.isNotEmpty()) {
                 println("[DEBUG SpaceManageScreen] Showing ${pendingMembers.size} pending members")
@@ -195,7 +220,7 @@ fun SpaceManageScreen(
                         fontWeight = FontWeight.Bold
                     )
                 }
-                
+
                 items(pendingMembers) { memberInfo ->
                     MemberRequestCard(
                         memberInfo = memberInfo,
@@ -213,12 +238,12 @@ fun SpaceManageScreen(
                         }
                     )
                 }
-                
+
                 item { HorizontalDivider() }
             } else {
                 println("[DEBUG SpaceManageScreen] No pending members to display")
             }
-            
+
             // 现有成员
             item {
                 Text(
@@ -227,7 +252,7 @@ fun SpaceManageScreen(
                     fontWeight = FontWeight.Bold
                 )
             }
-            
+
             items(spaceMembers) { memberInfo ->
                 MemberCard(
                     memberInfo = memberInfo,
@@ -283,7 +308,24 @@ fun SpaceManageScreen(
                     }
                 }
             }
+
         }
+        if (showInviteDialog) {
+            InviteFriendDialog(
+                onDismiss = { showInviteDialog = false },
+                spaceId = spaceId,
+                currentUserId = currentUserId,
+                onInvite = { friendUserId ->
+                    scope.launch {
+                        viewModel.inviteFriendToSpace(spaceId, friendUserId)
+                        snackbarHostState.showSnackbar("已发送邀请/加入请求")
+                        showInviteDialog = false
+                    }
+                }
+            )
+        }
+
+
     }
 
     // 解散空间确认对话框
@@ -371,7 +413,7 @@ fun MemberRequestCard(
                     )
                 }
             }
-            
+
             Row {
                 IconButton(
                     onClick = onApprove,
@@ -418,7 +460,7 @@ fun MemberCard(
         "admin" -> "管理员"
         else -> "成员"
     }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -456,12 +498,12 @@ fun MemberCard(
                     Text(
                         text = roleText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (isAdminOrOwner) MaterialTheme.colorScheme.primary 
-                               else MaterialTheme.colorScheme.outline
+                        color = if (isAdminOrOwner) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline
                     )
                 }
             }
-            
+
             // 只有非管理员、非所有者且非当前用户才显示移除按钮
             if (canRemove && !isAdminOrOwner && !isCurrentUser) {
                 TextButton(onClick = onRemove) {
@@ -485,20 +527,20 @@ fun CheckInSettingsCard(
     var hours by remember { mutableStateOf("0") }
     var minutes by remember { mutableStateOf("0") }
     var seconds by remember { mutableStateOf("0") }
-    
+
     // 使用本地状态来跟踪当前间隔，确保UI立即更新
     var localIntervalSeconds by remember(space.id) { mutableStateOf(space.checkInIntervalSeconds) }
-    
+
     // 当 space 变化时同步本地状态
     LaunchedEffect(space.checkInIntervalSeconds) {
         localIntervalSeconds = space.checkInIntervalSeconds
     }
-    
+
     // 将当前间隔转换为时分秒（使用本地状态）
     val currentHours = localIntervalSeconds / 3600
     val currentMinutes = (localIntervalSeconds % 3600) / 60
     val currentSeconds = localIntervalSeconds % 60
-    
+
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -507,7 +549,7 @@ fun CheckInSettingsCard(
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.height(8.dp))
-            
+
             if (localIntervalSeconds > 0) {
                 Text(
                     "当前打卡间隔：${currentHours}小时 ${currentMinutes}分钟 ${currentSeconds}秒",
@@ -530,9 +572,9 @@ fun CheckInSettingsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            
+
             Spacer(Modifier.height(12.dp))
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -543,12 +585,12 @@ fun CheckInSettingsCard(
                 ) {
                     Text(if (localIntervalSeconds > 0) "修改设置" else "设置打卡")
                 }
-                
+
                 if (localIntervalSeconds > 0) {
                     OutlinedButton(
-                        onClick = { 
+                        onClick = {
                             localIntervalSeconds = 0  // 立即更新本地状态
-                            onUpdateInterval(0) 
+                            onUpdateInterval(0)
                         },
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -561,7 +603,7 @@ fun CheckInSettingsCard(
             }
         }
     }
-    
+
     // 设置对话框
     if (showDialog) {
         AlertDialog(
@@ -573,7 +615,7 @@ fun CheckInSettingsCard(
                         "设置成员发布动态的最大间隔时间",
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -581,7 +623,7 @@ fun CheckInSettingsCard(
                     ) {
                         OutlinedTextField(
                             value = hours,
-                            onValueChange = { 
+                            onValueChange = {
                                 if (it.isEmpty() || it.all { char -> char.isDigit() }) {
                                     hours = it
                                 }
@@ -593,7 +635,7 @@ fun CheckInSettingsCard(
                         Text(":")
                         OutlinedTextField(
                             value = minutes,
-                            onValueChange = { 
+                            onValueChange = {
                                 if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
                                     minutes = it
                                 }
@@ -605,7 +647,7 @@ fun CheckInSettingsCard(
                         Text(":")
                         OutlinedTextField(
                             value = seconds,
-                            onValueChange = { 
+                            onValueChange = {
                                 if (it.isEmpty() || (it.all { char -> char.isDigit() } && it.toIntOrNull()?.let { num -> num < 60 } == true)) {
                                     seconds = it
                                 }
@@ -615,7 +657,7 @@ fun CheckInSettingsCard(
                             singleLine = true
                         )
                     }
-                    
+
                     Text(
                         "示例：设置为 24:00:00 表示每天需要发布一次动态",
                         style = MaterialTheme.typography.bodySmall,
@@ -630,7 +672,7 @@ fun CheckInSettingsCard(
                         val m = minutes.toLongOrNull() ?: 0
                         val s = seconds.toLongOrNull() ?: 0
                         val totalSeconds = h * 3600 + m * 60 + s
-                        
+
                         if (totalSeconds > 0) {
                             localIntervalSeconds = totalSeconds  // 立即更新本地状态
                             onUpdateInterval(totalSeconds)
@@ -649,3 +691,122 @@ fun CheckInSettingsCard(
         )
     }
 }
+@Composable
+fun InviteFriendDialog(
+    onDismiss: () -> Unit,
+    spaceId: Int,
+    currentUserId: Int,
+    onInvite: (Int) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var friendList by remember { mutableStateOf<List<User>>(emptyList()) }
+    var selectedFriendId by remember { mutableStateOf<Int?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    // 打开对话框时加载好友列表
+    LaunchedEffect(Unit) {
+        try {
+            val friendsResponse = ApiService.getFriends(currentUserId)
+            if (friendsResponse.status == HttpStatusCode.OK) {
+                val friendRelations = friendsResponse.body<List<Friend>>()
+                // 从关系表中拿到对方的 userId，然后查资料
+                val users = friendRelations.map { relation ->
+                    val friendId =
+                        if (relation.senderId == currentUserId) relation.receiverId
+                        else relation.senderId
+
+                    async {
+                        try {
+                            val profileResponse = ApiService.getProfile(friendId)
+                            if (profileResponse.status == HttpStatusCode.OK) {
+                                profileResponse.body<User>()
+                            } else null
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                }.awaitAll().filterNotNull()
+
+                friendList = users
+            } else {
+                errorMessage = "加载好友列表失败"
+            }
+        } catch (e: Exception) {
+            errorMessage = "加载好友列表失败: ${e.message}"
+        } finally {
+            isLoading = false
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("邀请好友加入空间") },
+        text = {
+            when {
+                isLoading -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+
+                errorMessage != null -> {
+                    Text(errorMessage!!)
+                }
+
+                friendList.isEmpty() -> {
+                    Text("暂无可邀请的好友，请先添加好友。")
+                }
+
+                else -> {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("请选择要邀请的好友：")
+                        friendList.forEach { user ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedFriendId = user.uid }
+                                    .padding(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = selectedFriendId == user.uid,
+                                    onClick = { selectedFriendId = user.uid }
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column {
+                                    Text(user.nickname.ifBlank { user.email })
+                                    Text(
+                                        "ID: ${user.uid}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.outline
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    selectedFriendId?.let { onInvite(it) }
+                },
+                enabled = !isLoading && selectedFriendId != null
+            ) {
+                Text("邀请")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+

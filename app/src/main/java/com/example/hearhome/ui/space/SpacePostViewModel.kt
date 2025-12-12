@@ -37,7 +37,7 @@ class SpacePostViewModel(
 
     // 当前选中的 postId
     private val _selectedPostId = MutableStateFlow<Int?>(null)
-    
+
     // 空间内的所有动态（使用响应式Flow，类似comments的实现）
     // 同时监听动态列表、附件变化和收藏状态变化
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -281,7 +281,7 @@ class SpacePostViewModel(
     suspend fun toggleLike(postId: Int): Boolean {
         return try {
             spacePostDao.toggleLike(postId, currentUserId)
-            
+
             // 发送点赞通知
             context?.let { ctx ->
                 val post = spacePostDao.getPostById(postId)
@@ -289,18 +289,18 @@ class SpacePostViewModel(
                     // 只在点赞别人的动态时发送通知
                     val currentUser = userDao.getUserById(currentUserId)
                     val postAuthor = userDao.getUserById(post.authorId)
-                    
+
                     if (currentUser != null && postAuthor != null) {
                         // 检查是否新增点赞（如果已点赞则是取消点赞）
                         val isLiking = spacePostDao.hasLiked(postId, currentUserId) > 0
-                        
+
                         if (isLiking) {
                             val contentPreview = if (post.content.length > 20) {
                                 post.content.substring(0, 20) + "..."
                             } else {
                                 post.content
                             }
-                            
+
                             NotificationHelper.sendLikeNotification(
                                 context = ctx,
                                 notificationId = System.currentTimeMillis().toInt(),
@@ -311,7 +311,7 @@ class SpacePostViewModel(
                     }
                 }
             }
-            
+
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -359,14 +359,14 @@ class SpacePostViewModel(
                 }
                 mediaAttachmentDao.insertAttachments(entities)
             }
-            
+
             // 发送评论通知
             context?.let { ctx ->
                 val post = spacePostDao.getPostById(postId)
                 if (post != null && post.authorId != currentUserId) {
                     // 只在评论别人的动态时发送通知
                     val currentUser = userDao.getUserById(currentUserId)
-                    
+
                     if (currentUser != null) {
                         NotificationHelper.sendCommentNotification(
                             context = ctx,
@@ -378,7 +378,7 @@ class SpacePostViewModel(
                     }
                 }
             }
-            
+
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -516,7 +516,7 @@ class SpacePostViewModel(
             }
         }
     }
-    
+
     /**
      * 切换收藏状态
      */
@@ -540,7 +540,7 @@ class SpacePostViewModel(
             false
         }
     }
-    
+
     /**
      * 获取用户的收藏动态列表
      */
