@@ -9,12 +9,14 @@ import com.example.hearhome.data.local.User
 import io.ktor.client.*
 import io.ktor.client.engine.cio.*
 import io.ktor.client.plugins.contentnegotiation.*
+import io.ktor.client.plugins.websocket.*
 import io.ktor.client.request.*
 import io.ktor.client.request.forms.formData
 import io.ktor.client.request.forms.submitFormWithBinaryData
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.websocket.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import io.ktor.client.call.body
@@ -92,6 +94,12 @@ data class ApiSpacePost(
 )
 
 @Serializable
+data class SpacePostUpdate(
+    val type: String = "created",
+    val post: ApiSpacePost
+)
+
+@Serializable
 data class ApiMessage(
     val id: Int = 0,
     val senderId: Int,
@@ -127,14 +135,23 @@ data class CoupleRequest(val requesterId: Int, val partnerId: Int)
 object ApiService {
     private const val BASE_URL = "http://121.37.136.244:8080/"   //http://10.0.2.2:8080
 
+    private val json = Json {
+        prettyPrint = true
+        isLenient = true
+        ignoreUnknownKeys = true
+    }
+
     private val client = HttpClient(CIO) {
         install(ContentNegotiation) {
-            json(Json {
-                prettyPrint = true
-                isLenient = true
-                ignoreUnknownKeys = true
-            })
+            json(json)
         }
+        install(WebSockets)
+    }
+
+    private fun buildWsUrl(path: String): String {
+        val normalizedBase = BASE_URL.trimEnd('/')
+        val protocol = if (normalizedBase.startsWith("https")) "wss" else "ws"
+        return "$protocol://${normalizedBase.removePrefix("http://").removePrefix("https://")}/$path"
     }
 
     /**
@@ -294,6 +311,11 @@ object ApiService {
             contentType(ContentType.Application.Json)
             setBody(post)
         }
+    }
+
+    suspend fun connectPostUpdates(spaceId: Int): DefaultClientWebSocketSession {
+        val wsUrl = buildWsUrl("ws/space/$spaceId/posts")
+        return client.webSocketSession { url(wsUrl) }
     }
 
     // ==================== 情侣关系相关 API ====================

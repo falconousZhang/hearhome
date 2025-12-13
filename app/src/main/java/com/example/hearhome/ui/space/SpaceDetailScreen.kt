@@ -79,6 +79,11 @@ fun SpaceDetailScreen(
         )
     )
 
+    // 启动前端轮询刷新，避免改后端接口
+    LaunchedEffect(spaceId) {
+        postViewModel.startAutoRefresh()
+    }
+
     val currentSpace by spaceViewModel.currentSpace.collectAsState()
     val posts by postViewModel.posts.collectAsState()
     val currentUserRole by spaceViewModel.currentUserRole.collectAsState()

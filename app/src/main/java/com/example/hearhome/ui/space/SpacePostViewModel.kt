@@ -7,17 +7,25 @@ import androidx.lifecycle.viewModelScope
 import com.example.hearhome.data.local.*
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.data.remote.ApiSpacePost
+import com.example.hearhome.data.remote.SpacePostUpdate
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
+import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
+import io.ktor.websocket.*
 import com.example.hearhome.model.AttachmentType
 import com.example.hearhome.model.ResolvedAttachment
 import com.example.hearhome.utils.AudioUtils
 import com.example.hearhome.utils.ImageUtils
 import com.example.hearhome.utils.NotificationHelper
 import com.example.hearhome.ui.chat.ImageUploadResponse
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import org.json.JSONArray
 import java.io.File
 
@@ -34,6 +42,10 @@ class SpacePostViewModel(
     private val currentUserId: Int,
     private val context: Context? = null
 ) : ViewModel() {
+
+    private val websocketJson = Json { ignoreUnknownKeys = true }
+    private var realtimeJob: Job? = null
+    private var refreshJob: Job? = null
 
     // 当前选中的 postId
     private val _selectedPostId = MutableStateFlow<Int?>(null)
@@ -81,6 +93,7 @@ class SpacePostViewModel(
     init {
         // 进入空间时先从服务器同步一次动态和作者信息
         viewModelScope.launch { syncPostsFromServer() }
+        startRealtimeUpdates()
     }
 
     // 选中的动态详情（从posts中获取）
@@ -133,6 +146,65 @@ class SpacePostViewModel(
             }
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    private fun startRealtimeUpdates() {
+        if (realtimeJob != null) return
+
+        realtimeJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                var session: DefaultClientWebSocketSession? = null
+                try {
+                    session = ApiService.connectPostUpdates(spaceId)
+                    for (frame in session.incoming) {
+                        if (!isActive) break
+                        val text = (frame as? Frame.Text)?.readText() ?: continue
+                        val event = runCatching {
+                            websocketJson.decodeFromString<SpacePostUpdate>(text)
+                        }.getOrNull() ?: continue
+
+                        if (event.post.spaceId != spaceId) continue
+
+                        val apiPost = event.post
+                        spacePostDao.insert(apiPost.toLocal())
+
+                        val imageUrls = parseImages(apiPost.images)
+                        if (imageUrls.isNotEmpty()) {
+                            mediaAttachmentDao.deleteAttachments(AttachmentOwnerType.SPACE_POST, apiPost.id)
+                            val entities = imageUrls.map { url ->
+                                MediaAttachment(
+                                    ownerType = AttachmentOwnerType.SPACE_POST,
+                                    ownerId = apiPost.id,
+                                    type = AttachmentType.IMAGE.name,
+                                    uri = url
+                                )
+                            }
+                            mediaAttachmentDao.insertAttachments(entities)
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("[SpacePostViewModel] Realtime stream error: ${e.message}")
+                    delay(5000)
+                } finally {
+                    runCatching {
+                        session?.close(CloseReason(CloseReason.Codes.NORMAL, "close"))
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 轮询刷新动态列表（无需改后端），默认 5 秒一次。
+     */
+    fun startAutoRefresh(intervalMs: Long = 5_000) {
+        if (refreshJob != null) return
+        refreshJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                syncPostsFromServer()
+                delay(intervalMs)
+            }
+        }
+    }
 
     /**
      * 发布新动态
@@ -568,6 +640,12 @@ class SpacePostViewModel(
                 _favoritePosts.value = favoritePosts
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        realtimeJob?.cancel()
+        refreshJob?.cancel()
     }
 }
 
