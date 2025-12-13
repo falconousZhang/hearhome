@@ -19,8 +19,10 @@ data class GenericResponse(
 data class UpdatePasswordRequest(
     val email: String,
     val oldPassword: String,
-    val securityAnswer: String,
-    val newPassword: String
+    val newPassword: String,
+    val securityAnswer: String? = null,
+    val emailCode: String? = null,
+    val verificationToken: String? = null
 )
 
 /** 个人中心：设置/修改密保 */
@@ -29,7 +31,9 @@ data class UpdateSecurityQuestionRequest(
     val email: String,
     val password: String,
     val question: String,
-    val answer: String
+    val answer: String,
+    val emailCode: String? = null,
+    val verificationToken: String? = null
 )
 
 /** 忘记密码：取密保问题 */
@@ -44,6 +48,38 @@ data class ResetPasswordRequest(
     val email: String,
     val answer: String,
     val newPassword: String
+)
+
+/** 忘记密码：邮箱验证码 + 新密码 */
+@Serializable
+data class ResetPasswordByEmailRequest(
+    val email: String,
+    val code: String,
+    val newPassword: String
+)
+
+/** 请求发送邮箱验证码 */
+@Serializable
+data class EmailVerificationRequest(
+    val email: String,
+    val purpose: String
+)
+
+/** 提交邮箱验证码 */
+@Serializable
+data class EmailVerificationConfirmRequest(
+    val email: String,
+    val purpose: String,
+    val code: String
+)
+
+/** 统一验证码/风控响应，供前端判定下一步动作 */
+@Serializable
+data class VerificationStatusResponse(
+    val code: String? = null,
+    val status: String? = null,
+    val message: String? = null,
+    val nextStep: String? = null
 )
 
 /** 忘记密码：后端返回的密保问题 */

@@ -172,17 +172,26 @@ object ApiService {
             setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword))
         }
 
+    /** Step3（邮箱验证码路径）：提交验证码 + 新密码 */
+    suspend fun resetPasswordByEmailCode(email: String, code: String, newPassword: String): HttpResponse =
+        client.post("$BASE_URL/users/reset-password/email") {
+            contentType(ContentType.Application.Json)
+            setBody(ResetPasswordByEmailRequest(email.trim(), code.trim(), newPassword))
+        }
+
     // ============================ 个人中心：密码/密保 ============================
     /** 修改密码 */
     suspend fun updatePassword(
         email: String,
         oldPassword: String,
-        securityAnswer: String,
-        newPassword: String
+        newPassword: String,
+        securityAnswer: String? = null,
+        emailCode: String? = null,
+        verificationToken: String? = null
     ): HttpResponse =
         client.post("$BASE_URL/users/update-password") {
             contentType(ContentType.Application.Json)
-            setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword))
+            setBody(UpdatePasswordRequest(email, oldPassword, newPassword, securityAnswer, emailCode, verificationToken))
         }
 
     /** 设置/修改密保 */
@@ -190,11 +199,27 @@ object ApiService {
         email: String,
         password: String,
         question: String,
-        answer: String
+        answer: String,
+        emailCode: String? = null,
+        verificationToken: String? = null
     ): HttpResponse =
         client.post("$BASE_URL/users/update-security-question") {
             contentType(ContentType.Application.Json)
-            setBody(UpdateSecurityQuestionRequest(email, password, question, answer))
+            setBody(UpdateSecurityQuestionRequest(email, password, question, answer, emailCode, verificationToken))
+        }
+
+    /** 风控触发：请求邮箱验证码 */
+    suspend fun requestEmailVerification(email: String, purpose: String): HttpResponse =
+        client.post("$BASE_URL/security/email-code/request") {
+            contentType(ContentType.Application.Json)
+            setBody(EmailVerificationRequest(email.trim(), purpose))
+        }
+
+    /** 提交邮箱验证码 */
+    suspend fun verifyEmailCode(email: String, purpose: String, code: String): HttpResponse =
+        client.post("$BASE_URL/security/email-code/verify") {
+            contentType(ContentType.Application.Json)
+            setBody(EmailVerificationConfirmRequest(email.trim(), purpose, code.trim()))
         }
 
     suspend fun register(user: User): HttpResponse {

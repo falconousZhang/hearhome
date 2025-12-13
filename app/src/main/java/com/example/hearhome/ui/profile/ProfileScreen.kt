@@ -42,7 +42,6 @@ fun ProfileScreen(
     val user = uiState.user
 
     var oldPassword by remember { mutableStateOf("") }
-    var securityAnswerForPasswordChange by remember { mutableStateOf("") }
     var newPassword by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
 
@@ -57,6 +56,10 @@ fun ProfileScreen(
     var newPasswordVisible by remember { mutableStateOf(false) }
     var confirmPasswordVisible by remember { mutableStateOf(false) }
     var passwordForSQVisible by remember { mutableStateOf(false) }
+
+    var showEmailCodeDialog by remember { mutableStateOf(false) }
+    var emailCodePurpose by remember { mutableStateOf<AuthViewModel.VerificationPurpose?>(null) }
+    var emailCodeInput by remember { mutableStateOf("") }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -78,10 +81,31 @@ fun ProfileScreen(
                 scope.launch { snackbarHostState.showSnackbar("私密问题更新成功！") }
                 securityAnswerForSQ = ""
                 passwordForSQ = ""
+                showEmailCodeDialog = false
+                emailCodePurpose = null
+                emailCodeInput = ""
                 authViewModel.onProfileEventConsumed()
             }
             is AuthViewModel.AuthState.PasswordUpdateSuccess -> {
                 scope.launch { snackbarHostState.showSnackbar("密码修改成功，请重新登录") }
+                showEmailCodeDialog = false
+                emailCodePurpose = null
+                emailCodeInput = ""
+            }
+            is AuthViewModel.AuthState.EmailCodeRequired -> {
+                if (state.purpose == AuthViewModel.VerificationPurpose.UPDATE_PASSWORD || state.purpose == AuthViewModel.VerificationPurpose.UPDATE_SECURITY_QUESTION) {
+                    emailCodePurpose = state.purpose
+                    emailCodeInput = ""
+                    showEmailCodeDialog = true
+                    state.reason?.let { scope.launch { snackbarHostState.showSnackbar(it) } }
+                }
+            }
+            is AuthViewModel.AuthState.EmailCodeSent -> {
+                if (state.purpose == AuthViewModel.VerificationPurpose.UPDATE_PASSWORD || state.purpose == AuthViewModel.VerificationPurpose.UPDATE_SECURITY_QUESTION) {
+                    emailCodePurpose = state.purpose
+                    showEmailCodeDialog = true
+                    scope.launch { snackbarHostState.showSnackbar("验证码已发送至邮箱，请查收") }
+                }
             }
             else -> {}
         }
@@ -146,13 +170,11 @@ fun ProfileScreen(
                 // ✅ 恢复修改密码的UI
                 OutlinedTextField(value = oldPassword, onValueChange = { oldPassword = it }, label = { Text("旧密码") }, visualTransformation = if (oldPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(), trailingIcon = { IconButton(onClick = { oldPasswordVisible = !oldPasswordVisible }) { Icon(imageVector = if (oldPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility") } }, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(value = securityAnswerForPasswordChange, onValueChange = { securityAnswerForPasswordChange = it }, label = { Text("安全问题: ${user.secQuestion}") }, placeholder = { Text("请输入答案") }, modifier = Modifier.fillMaxWidth())
-                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(value = newPassword, onValueChange = { newPassword = it }, label = { Text("新密码") }, visualTransformation = if (newPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(), trailingIcon = { IconButton(onClick = { newPasswordVisible = !newPasswordVisible }) { Icon(imageVector = if (newPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility") } }, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(value = confirmPassword, onValueChange = { confirmPassword = it }, label = { Text("确认新密码") }, visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(), trailingIcon = { IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) { Icon(imageVector = if (confirmPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility") } }, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = { authViewModel.updatePassword(email = user.email, oldPassword = oldPassword, securityAnswer = securityAnswerForPasswordChange, newPassword = newPassword, confirmPassword = confirmPassword) }, modifier = Modifier.fillMaxWidth()) { Text("确认修改密码") }
+                Button(onClick = { authViewModel.updatePassword(email = user.email, oldPassword = oldPassword, newPassword = newPassword, confirmPassword = confirmPassword) }, modifier = Modifier.fillMaxWidth()) { Text("确认修改密码") }
 
                 Spacer(modifier = Modifier.height(32.dp))
                 Text("设置私密问题", style = MaterialTheme. typography.headlineSmall)
@@ -187,6 +209,22 @@ fun ProfileScreen(
                 onDismiss = { showLogoutDialog = false }
             )
         }
+
+        if (showEmailCodeDialog && emailCodePurpose != null && user != null) {
+            EmailCodeDialog(
+                email = user.email,
+                purpose = emailCodePurpose!!,
+                code = emailCodeInput,
+                onCodeChange = { emailCodeInput = it },
+                onConfirm = { authViewModel.verifyEmailCode(emailCodeInput.trim()) },
+                onResend = { authViewModel.resendEmailCode(emailCodePurpose!!) },
+                onDismiss = {
+                    showEmailCodeDialog = false
+                    emailCodeInput = ""
+                },
+                isLoading = authState is AuthViewModel.AuthState.Loading
+            )
+        }
     }
 }
 
@@ -215,5 +253,52 @@ private fun LogoutConfirmationDialog(onConfirm: () -> Unit, onDismiss: () -> Uni
         text = { Text("您确定要退出登录吗？") },
         confirmButton = { TextButton(onClick = onConfirm) { Text("确定") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+@Composable
+private fun EmailCodeDialog(
+    email: String,
+    purpose: AuthViewModel.VerificationPurpose,
+    code: String,
+    onCodeChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onResend: () -> Unit,
+    onDismiss: () -> Unit,
+    isLoading: Boolean
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("邮箱验证码验证") },
+        text = {
+            Column {
+                Text(text = "为了完成敏感操作，需校验发送到 $email 的验证码。")
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = onCodeChange,
+                    label = { Text("验证码") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "操作类型：${purpose.name}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onConfirm, enabled = code.isNotBlank() && !isLoading) {
+                Text(if (isLoading) "校验中…" else "提交")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onResend, enabled = !isLoading) { Text("重发") }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        }
     )
 }

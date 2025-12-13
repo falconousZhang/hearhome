@@ -6,7 +6,9 @@ import com.example.hearhome.data.local.User
 import com.example.hearhome.data.local.UserDao
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.data.remote.LoginRequest
+import com.example.hearhome.data.remote.GenericResponse
 import io.ktor.client.call.*
+import io.ktor.client.statement.*
 import io.ktor.http.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +17,24 @@ import kotlinx.coroutines.launch
 class AuthViewModel(
     private val userDao: UserDao
 ) : ViewModel() {
+
+    /** 支持多种风控校验的业务目标。可扩展为手机号验证、双因素认证等。 */
+    enum class VerificationPurpose { UPDATE_PASSWORD, UPDATE_SECURITY_QUESTION, RESET_PASSWORD;
+        fun asServerValue(): String = name
+    }
+
+    private data class PendingPasswordUpdate(
+        val email: String,
+        val oldPassword: String,
+        val newPassword: String
+    )
+
+    private data class PendingSecurityQuestionUpdate(
+        val email: String,
+        val password: String,
+        val question: String,
+        val answer: String
+    )
 
     sealed class AuthState {
         object Idle : AuthState()
@@ -27,6 +47,10 @@ class AuthViewModel(
         object PasswordResetSuccess : AuthState()
         object UpdateSuccess : AuthState()
         object PasswordUpdateSuccess : AuthState()
+        data class EmailCodeRequired(val email: String, val purpose: VerificationPurpose, val reason: String? = null) : AuthState()
+        data class EmailCodeSent(val email: String, val purpose: VerificationPurpose) : AuthState()
+        data class EmailCodeVerified(val email: String, val purpose: VerificationPurpose) : AuthState()
+        data class SecurityQuestionRequired(val email: String, val question: String) : AuthState()
         data class Error(val message: String) : AuthState()
     }
 
@@ -36,9 +60,21 @@ class AuthViewModel(
     private var currentEmailForReset: String? = null
     private var currentSecQuestion: String? = null
     private var resetAnswerPlain: String? = null
+    private var pendingResetEmail: String? = null
+    private var verifiedResetCode: String? = null
+
+    private var pendingPasswordUpdate: PendingPasswordUpdate? = null
+    private var pendingSecurityQuestionUpdate: PendingSecurityQuestionUpdate? = null
 
     /** ===== 给 MainActivity / LoginScreen 清一次性状态 ===== */
-    fun resetAuthResult() { _authState.value = AuthState.Idle }
+    fun resetAuthResult() {
+        _authState.value = AuthState.Idle
+        verifiedResetCode = null
+        resetAnswerPlain = null
+        pendingPasswordUpdate = null
+        pendingSecurityQuestionUpdate = null
+        pendingResetEmail = null
+    }
 
     /** =====（如果 UI 用到）ProfileScreen 消费完事件后回到可交互状态 ===== */
     fun onProfileEventConsumed() { _authState.value = AuthState.AwaitingInput }
@@ -130,12 +166,11 @@ class AuthViewModel(
     fun updatePassword(
         email: String,
         oldPassword: String,
-        securityAnswer: String,
         newPassword: String,
         confirmPassword: String
     ) {
         viewModelScope.launch {
-            if (oldPassword.isBlank() || securityAnswer.isBlank() || newPassword.isBlank() || confirmPassword.isBlank()) {
+            if (oldPassword.isBlank() || newPassword.isBlank() || confirmPassword.isBlank()) {
                 _authState.value = AuthState.Error("所有字段均不能为空"); return@launch
             }
             if (newPassword.length < 6) { _authState.value = AuthState.Error("新密码至少 6 位"); return@launch }
@@ -143,14 +178,20 @@ class AuthViewModel(
 
             _authState.value = AuthState.Loading
             try {
-                val resp = ApiService.updatePassword(email.trim(), oldPassword, securityAnswer, newPassword)
+                val resp = ApiService.updatePassword(email.trim(), oldPassword, newPassword)
                 when (resp.status) {
-                    HttpStatusCode.OK -> _authState.value = AuthState.PasswordUpdateSuccess
-                    HttpStatusCode.BadRequest, HttpStatusCode.NotFound -> {
-                        val gr = resp.body<com.example.hearhome.data.remote.GenericResponse>()
-                        _authState.value = AuthState.Error(gr.message)
+                    HttpStatusCode.OK -> {
+                        pendingPasswordUpdate = null
+                        _authState.value = AuthState.PasswordUpdateSuccess
                     }
-                    else -> _authState.value = AuthState.Error("修改失败：${resp.status.value}")
+                    else -> handleRiskResponse(
+                        resp,
+                        onNeedEmail = { reason ->
+                            // 后端要求邮箱验证码时，缓存必要参数并触发验证码下发
+                            pendingPasswordUpdate = PendingPasswordUpdate(email.trim(), oldPassword, newPassword)
+                            requestEmailCode(email.trim(), VerificationPurpose.UPDATE_PASSWORD, reason)
+                        }
+                    )
                 }
             } catch (e: Exception) {
                 _authState.value = AuthState.Error("修改失败：${e.message}")
@@ -168,15 +209,45 @@ class AuthViewModel(
             try {
                 val resp = ApiService.updateSecurityQuestion(email.trim(), password, question.trim(), answer.trim())
                 when (resp.status) {
-                    HttpStatusCode.OK -> _authState.value = AuthState.UpdateSuccess
-                    HttpStatusCode.BadRequest, HttpStatusCode.NotFound -> {
-                        val gr = resp.body<com.example.hearhome.data.remote.GenericResponse>()
-                        _authState.value = AuthState.Error(gr.message)
+                    HttpStatusCode.OK -> {
+                        pendingSecurityQuestionUpdate = null
+                        _authState.value = AuthState.UpdateSuccess
                     }
-                    else -> _authState.value = AuthState.Error("更新失败：${resp.status.value}")
+                    else -> handleRiskResponse(
+                        resp,
+                        onNeedEmail = { reason ->
+                            pendingSecurityQuestionUpdate = PendingSecurityQuestionUpdate(email.trim(), password, question.trim(), answer.trim())
+                            requestEmailCode(email.trim(), VerificationPurpose.UPDATE_SECURITY_QUESTION, reason)
+                        }
+                    )
                 }
             } catch (e: Exception) {
                 _authState.value = AuthState.Error("更新失败：${e.message}")
+            }
+        }
+    }
+
+    /** ===== 忘记密码 Step 0：优先尝试邮箱验证码 ===== */
+    fun startResetByEmail(email: String) {
+        viewModelScope.launch {
+            if (email.isBlank()) { _authState.value = AuthState.Error("请填写邮箱"); return@launch }
+            pendingResetEmail = email.trim()
+            verifiedResetCode = null
+            resetAnswerPlain = null
+            currentSecQuestion = null
+            _authState.value = AuthState.Loading
+            try {
+                val resp = ApiService.requestEmailVerification(email.trim(), VerificationPurpose.RESET_PASSWORD.asServerValue())
+                when (resp.status) {
+                    HttpStatusCode.OK, HttpStatusCode.Accepted -> _authState.value = AuthState.EmailCodeSent(email.trim(), VerificationPurpose.RESET_PASSWORD)
+                    else -> handleRiskResponse(
+                        resp,
+                        onNeedEmail = { reason -> _authState.value = AuthState.Error(reason ?: "发送验证码失败：${resp.status.value}") },
+                        onNeedSecurityQuestion = { startResetByQuestion(email.trim()) }
+                    )
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("发送验证码失败：${e.message}")
             }
         }
     }
@@ -195,8 +266,9 @@ class AuthViewModel(
                             _authState.value = AuthState.Error("该账号未设置密保问题")
                         } else {
                             currentEmailForReset = email.trim()
+                            pendingResetEmail = email.trim()
                             currentSecQuestion = q.question
-                            _authState.value = AuthState.PasswordResetReady
+                            _authState.value = AuthState.SecurityQuestionRequired(email.trim(), q.question)
                         }
                     }
                     HttpStatusCode.NotFound, HttpStatusCode.BadRequest -> {
@@ -220,24 +292,29 @@ class AuthViewModel(
         return true
     }
 
-    /** ===== 忘记密码 Step 3：提交到后端校验并重置（/users/reset-password） ===== */
+    /** ===== 忘记密码 Step 3：提交到后端校验并重置（邮箱验证码优先） ===== */
     fun setNewPassword(newPassword: String) {
         viewModelScope.launch {
-            val email = currentEmailForReset
-            val answer = resetAnswerPlain
-            if (email.isNullOrBlank() || answer.isNullOrBlank()) {
-                _authState.value = AuthState.Error("流程异常，请重试"); return@launch
-            }
+            val email = pendingResetEmail ?: currentEmailForReset
+            if (email.isNullOrBlank()) { _authState.value = AuthState.Error("流程异常，请重试"); return@launch }
             if (newPassword.length < 6) { _authState.value = AuthState.Error("新密码至少 6 位"); return@launch }
 
             _authState.value = AuthState.Loading
             try {
-                val resp = ApiService.resetPasswordByAnswer(email, answer.trim(), newPassword)
+                val resp = when {
+                    !verifiedResetCode.isNullOrBlank() -> ApiService.resetPasswordByEmailCode(email, verifiedResetCode!!, newPassword)
+                    !resetAnswerPlain.isNullOrBlank() -> ApiService.resetPasswordByAnswer(email, resetAnswerPlain!!.trim(), newPassword)
+                    else -> {
+                        _authState.value = AuthState.Error("请先完成邮箱或密保验证"); return@launch
+                    }
+                }
                 when (resp.status) {
                     HttpStatusCode.OK -> {
                         currentEmailForReset = null
                         currentSecQuestion = null
                         resetAnswerPlain = null
+                        verifiedResetCode = null
+                        pendingResetEmail = null
                         _authState.value = AuthState.PasswordResetSuccess
                     }
                     HttpStatusCode.BadRequest, HttpStatusCode.NotFound -> {
@@ -251,4 +328,139 @@ class AuthViewModel(
             }
         }
     }
+
+    /** 发送或重发验证码（UI 复用） */
+    fun resendEmailCode(purpose: VerificationPurpose) {
+        val email = when (purpose) {
+            VerificationPurpose.UPDATE_PASSWORD -> pendingPasswordUpdate?.email
+            VerificationPurpose.UPDATE_SECURITY_QUESTION -> pendingSecurityQuestionUpdate?.email
+            VerificationPurpose.RESET_PASSWORD -> pendingResetEmail
+        }
+        if (email.isNullOrBlank()) {
+            _authState.value = AuthState.Error("暂无可发送验证码的邮箱"); return
+        }
+        requestEmailCode(email, purpose, null)
+    }
+
+    /** 用户提交验证码后，根据当前 pending 操作继续执行。 */
+    fun verifyEmailCode(code: String) {
+        val pendingPurpose = when {
+            pendingPasswordUpdate != null -> VerificationPurpose.UPDATE_PASSWORD
+            pendingSecurityQuestionUpdate != null -> VerificationPurpose.UPDATE_SECURITY_QUESTION
+            pendingResetEmail != null -> VerificationPurpose.RESET_PASSWORD
+            else -> { _authState.value = AuthState.Error("当前没有需要验证码的操作"); return }
+        }
+        val email = when (pendingPurpose) {
+            VerificationPurpose.UPDATE_PASSWORD -> pendingPasswordUpdate?.email
+            VerificationPurpose.UPDATE_SECURITY_QUESTION -> pendingSecurityQuestionUpdate?.email
+            VerificationPurpose.RESET_PASSWORD -> pendingResetEmail
+        }
+        if (email.isNullOrBlank()) { _authState.value = AuthState.Error("缺少邮箱信息"); return }
+
+        _authState.value = AuthState.Loading
+        viewModelScope.launch {
+            try {
+                val resp = ApiService.verifyEmailCode(email, pendingPurpose.asServerValue(), code)
+                if (resp.status == HttpStatusCode.OK) {
+                    when (pendingPurpose) {
+                        VerificationPurpose.UPDATE_PASSWORD -> completePendingPasswordUpdate(code)
+                        VerificationPurpose.UPDATE_SECURITY_QUESTION -> completePendingSecurityQuestionUpdate(code)
+                        VerificationPurpose.RESET_PASSWORD -> {
+                            verifiedResetCode = code
+                            _authState.value = AuthState.EmailCodeVerified(email, pendingPurpose)
+                        }
+                    }
+                } else {
+                    val gr = resp.tryBodyOrNull<GenericResponse>()
+                    _authState.value = AuthState.Error(gr?.message ?: "验证码校验失败：${resp.status.value}")
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("验证码校验失败：${e.message}")
+            }
+        }
+    }
+
+    private suspend fun completePendingPasswordUpdate(emailCode: String) {
+        val payload = pendingPasswordUpdate ?: run {
+            _authState.value = AuthState.Error("暂无待继续的修改密码请求")
+            return
+        }
+        try {
+            val resp = ApiService.updatePassword(payload.email, payload.oldPassword, payload.newPassword, emailCode = emailCode)
+            when (resp.status) {
+                HttpStatusCode.OK -> {
+                    pendingPasswordUpdate = null
+                    _authState.value = AuthState.PasswordUpdateSuccess
+                }
+                else -> {
+                    val gr = resp.tryBodyOrNull<GenericResponse>()
+                    _authState.value = AuthState.Error(gr?.message ?: "修改失败：${resp.status.value}")
+                }
+            }
+        } catch (e: Exception) {
+            _authState.value = AuthState.Error("修改失败：${e.message}")
+        }
+    }
+
+    private suspend fun completePendingSecurityQuestionUpdate(emailCode: String) {
+        val payload = pendingSecurityQuestionUpdate ?: run {
+            _authState.value = AuthState.Error("暂无待继续的密保更新请求")
+            return
+        }
+        try {
+            val resp = ApiService.updateSecurityQuestion(payload.email, payload.password, payload.question, payload.answer, emailCode)
+            when (resp.status) {
+                HttpStatusCode.OK -> {
+                    pendingSecurityQuestionUpdate = null
+                    _authState.value = AuthState.UpdateSuccess
+                }
+                else -> {
+                    val gr = resp.tryBodyOrNull<GenericResponse>()
+                    _authState.value = AuthState.Error(gr?.message ?: "更新失败：${resp.status.value}")
+                }
+            }
+        } catch (e: Exception) {
+            _authState.value = AuthState.Error("更新失败：${e.message}")
+        }
+    }
+
+    private fun requestEmailCode(email: String, purpose: VerificationPurpose, reason: String?) {
+        _authState.value = AuthState.EmailCodeRequired(email, purpose, reason)
+        viewModelScope.launch {
+            try {
+                val resp = ApiService.requestEmailVerification(email, purpose.asServerValue())
+                if (resp.status == HttpStatusCode.OK || resp.status == HttpStatusCode.Accepted) {
+                    _authState.value = AuthState.EmailCodeSent(email, purpose)
+                } else {
+                    val gr = resp.tryBodyOrNull<GenericResponse>()
+                    _authState.value = AuthState.Error(gr?.message ?: "发送验证码失败：${resp.status.value}")
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("发送验证码失败：${e.message}")
+            }
+        }
+    }
+
+    private suspend fun handleRiskResponse(
+        resp: HttpResponse,
+        onNeedEmail: (String?) -> Unit,
+        onNeedSecurityQuestion: ((String?) -> Unit)? = null
+    ) {
+        val gr = resp.tryBodyOrNull<GenericResponse>()
+        val message = gr?.message
+        when {
+            requiresEmailVerification(message) -> onNeedEmail(message)
+            requiresSecurityQuestion(message) -> onNeedSecurityQuestion?.invoke(message)
+            else -> _authState.value = AuthState.Error(message ?: "请求失败：${resp.status.value}")
+        }
+    }
+
+    private fun requiresEmailVerification(message: String?): Boolean =
+        message?.contains("NEED_EMAIL_VERIFICATION", ignoreCase = true) == true
+
+    private fun requiresSecurityQuestion(message: String?): Boolean =
+        message?.contains("USE_SECURITY_QUESTION", ignoreCase = true) == true
+
+    private suspend inline fun <reified T> HttpResponse.tryBodyOrNull(): T? =
+        try { body<T>() } catch (_: Exception) { null }
 }
