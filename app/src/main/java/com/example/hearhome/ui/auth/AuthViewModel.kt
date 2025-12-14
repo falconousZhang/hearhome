@@ -293,6 +293,29 @@ class AuthViewModel(
         return true
     }
 
+    /** 密保答案提前远端校验：仅验证答案，不修改密码。 */
+    fun verifySecurityAnswerForReset(answer: String, onResult: (Boolean, String?) -> Unit) {
+        val email = pendingResetEmail ?: currentEmailForReset
+        if (email.isNullOrBlank()) {
+            onResult(false, "请先输入邮箱"); return
+        }
+        viewModelScope.launch {
+            try {
+                val resp = ApiService.resetPasswordByAnswer(email, answer.trim(), newPassword = "", confirmPassword = "", newEmail = null)
+                when (resp.status) {
+                    HttpStatusCode.OK -> onResult(true, null)
+                    HttpStatusCode.BadRequest, HttpStatusCode.NotFound, HttpStatusCode.Conflict -> {
+                        val gr = resp.tryBodyOrNull<GenericResponse>()
+                        onResult(false, gr?.message ?: "密保答案不正确")
+                    }
+                    else -> onResult(false, "校验失败：${resp.status.value}")
+                }
+            } catch (e: Exception) {
+                onResult(false, "校验失败：${e.message}")
+            }
+        }
+    }
+
     /** ===== 忘记密码 Step 2（邮箱验证码路径）：暂存验证码 */
     fun cacheResetEmailCode(code: String) { pendingResetCode = code }
 

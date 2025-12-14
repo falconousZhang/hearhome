@@ -105,7 +105,8 @@ private fun ForgotPasswordDialog(
     var newEmail by remember { mutableStateOf("") }
     var countdown by remember { mutableStateOf(0) }
     var countdownKey by remember { mutableStateOf(0) }
-
+    var checkingAnswer by remember { mutableStateOf(false) }
+                        2 -> {
     val question = viewModel.getCurrentResetQuestion()
     val globalError = (authState as? AuthViewModel.AuthState.Error)?.message
     val isLoading = authState is AuthViewModel.AuthState.Loading
@@ -330,9 +331,17 @@ private fun ForgotPasswordDialog(
                                     if (answer.isBlank()) {
                                         fieldError = "请输入答案"
                                     } else {
-                                        viewModel.verifyAnswer(answer.trim())
-                                        fieldError = null
-                                        step = 3
+                                        checkingAnswer = true
+                                        viewModel.verifySecurityAnswerForReset(answer.trim()) { ok, msg ->
+                                            checkingAnswer = false
+                                            if (ok) {
+                                                viewModel.verifyAnswer(answer.trim())
+                                                fieldError = null
+                                                step = 3
+                                            } else {
+                                                fieldError = msg ?: "密保答案不正确"
+                                            }
+                                        }
                                     }
                                 }
                                 3 -> {
@@ -349,7 +358,7 @@ private fun ForgotPasswordDialog(
                         Text(
                             when (mode) {
                                 ResetMode.EMAIL -> when (step) { 1 -> "发送验证码"; else -> "提交新密码" }
-                                ResetMode.SECURITY_QUESTION -> when (step) { 2 -> "下一步"; else -> "提交新密码" }
+                                ResetMode.SECURITY_QUESTION -> when (step) { 2 -> if (checkingAnswer) "校验中…" else "下一步"; else -> "提交新密码" }
                             }
                         )
                     }
