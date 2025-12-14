@@ -387,19 +387,27 @@ class AuthViewModel(
         }
         if (email.isNullOrBlank()) { _authState.value = AuthState.Error("缺少邮箱信息"); return }
 
+        // 对已登录的敏感操作，直接携带验证码完成后续请求，避免二次校验导致 "需要先获取验证码"。
+        if (pendingPurpose == VerificationPurpose.UPDATE_PASSWORD || pendingPurpose == VerificationPurpose.UPDATE_SECURITY_QUESTION) {
+            _authState.value = AuthState.Loading
+            viewModelScope.launch {
+                when (pendingPurpose) {
+                    VerificationPurpose.UPDATE_PASSWORD -> completePendingPasswordUpdate(code)
+                    VerificationPurpose.UPDATE_SECURITY_QUESTION -> completePendingSecurityQuestionUpdate(code)
+                    else -> {}
+                }
+            }
+            return
+        }
+
+        // 忘记密码路径仍使用后端校验以复用通用接口
         _authState.value = AuthState.Loading
         viewModelScope.launch {
             try {
                 val resp = ApiService.verifyEmailCode(email, pendingPurpose.asServerValue(), code)
                 if (resp.status == HttpStatusCode.OK) {
-                    when (pendingPurpose) {
-                        VerificationPurpose.UPDATE_PASSWORD -> completePendingPasswordUpdate(code)
-                        VerificationPurpose.UPDATE_SECURITY_QUESTION -> completePendingSecurityQuestionUpdate(code)
-                        VerificationPurpose.RESET_PASSWORD -> {
-                            pendingResetCode = code
-                            _authState.value = AuthState.EmailCodeVerified(email, pendingPurpose)
-                        }
-                    }
+                    pendingResetCode = code
+                    _authState.value = AuthState.EmailCodeVerified(email, pendingPurpose)
                 } else {
                     val gr = resp.tryBodyOrNull<GenericResponse>()
                     _authState.value = AuthState.Error(gr?.message ?: "验证码校验失败：${resp.status.value}")
