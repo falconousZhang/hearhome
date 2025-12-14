@@ -133,6 +133,8 @@ data class PostMention(
 data class CoupleRequest(val requesterId: Int, val partnerId: Int)
 
 object ApiService {
+    private const val FORCE_RISK_HEADER = "X-Force-Risk"
+    private const val FORCE_RISK_VALUE = "true"
     private const val BASE_URL = "http://121.37.136.244:8080/"   //http://10.0.2.2:8080
 
     private val json = Json {
@@ -182,11 +184,31 @@ object ApiService {
             setBody(ResetQuestionRequest(email.trim()))
         }
 
-    /** Step3：提交答案 + 新密码 */
-    suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse =
+    /** Step0：发送重置验证码 */
+    suspend fun sendResetPasswordCode(email: String): HttpResponse =
+        client.post("$BASE_URL/users/reset-password/send-code") {
+            contentType(ContentType.Application.Json)
+            setBody(ResetPasswordSendCodeRequest(email.trim()))
+        }
+
+    /** Step3：安全问题路径，提交答案 + 新密码 + 新邮箱 */
+    suspend fun resetPasswordByAnswer(
+        email: String,
+        answer: String,
+        newPassword: String,
+        confirmPassword: String,
+        newEmail: String?
+    ): HttpResponse =
         client.post("$BASE_URL/users/reset-password") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword))
+            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword, confirmPassword, newEmail, method = "SECURITY_QUESTION"))
+        }
+
+    /** Step3（邮箱验证码路径）：提交验证码 + 新密码 + 确认密码 */
+    suspend fun resetPasswordByEmailCode(email: String, code: String, newPassword: String, confirmPassword: String): HttpResponse =
+        client.post("$BASE_URL/users/reset-password") {
+            contentType(ContentType.Application.Json)
+            setBody(ResetPasswordByEmailRequest(email.trim(), code.trim(), newPassword, confirmPassword))
         }
 
     // ============================ 个人中心：密码/密保 ============================
@@ -194,12 +216,15 @@ object ApiService {
     suspend fun updatePassword(
         email: String,
         oldPassword: String,
-        securityAnswer: String,
-        newPassword: String
+        newPassword: String,
+        securityAnswer: String? = null,
+        emailCode: String? = null,
+        verificationToken: String? = null
     ): HttpResponse =
         client.post("$BASE_URL/users/update-password") {
+            header(FORCE_RISK_HEADER, FORCE_RISK_VALUE)
             contentType(ContentType.Application.Json)
-            setBody(UpdatePasswordRequest(email, oldPassword, securityAnswer, newPassword))
+            setBody(UpdatePasswordRequest(email, oldPassword, newPassword, securityAnswer, emailCode, verificationToken))
         }
 
     /** 设置/修改密保 */
@@ -207,11 +232,28 @@ object ApiService {
         email: String,
         password: String,
         question: String,
-        answer: String
+        answer: String,
+        emailCode: String? = null,
+        verificationToken: String? = null
     ): HttpResponse =
         client.post("$BASE_URL/users/update-security-question") {
+            header(FORCE_RISK_HEADER, FORCE_RISK_VALUE)
             contentType(ContentType.Application.Json)
-            setBody(UpdateSecurityQuestionRequest(email, password, question, answer))
+            setBody(UpdateSecurityQuestionRequest(email, password, question, answer, emailCode, verificationToken))
+        }
+
+    /** 风控触发：请求邮箱验证码 */
+    suspend fun requestEmailVerification(email: String, purpose: String): HttpResponse =
+        client.post("$BASE_URL/security/email-code/request") {
+            contentType(ContentType.Application.Json)
+            setBody(EmailVerificationRequest(email.trim(), purpose))
+        }
+
+    /** 提交邮箱验证码 */
+    suspend fun verifyEmailCode(email: String, purpose: String, code: String): HttpResponse =
+        client.post("$BASE_URL/security/email-code/verify") {
+            contentType(ContentType.Application.Json)
+            setBody(EmailVerificationConfirmRequest(email.trim(), purpose, code.trim()))
         }
 
     suspend fun register(user: User): HttpResponse {
