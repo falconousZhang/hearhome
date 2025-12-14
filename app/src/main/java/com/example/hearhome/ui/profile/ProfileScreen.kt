@@ -25,6 +25,7 @@ import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.ui.auth.AuthViewModel
 import com.example.hearhome.ui.components.AppBottomNavigation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -60,6 +61,8 @@ fun ProfileScreen(
     var showEmailCodeDialog by remember { mutableStateOf(false) }
     var emailCodePurpose by remember { mutableStateOf<AuthViewModel.VerificationPurpose?>(null) }
     var emailCodeInput by remember { mutableStateOf("") }
+    var codeCountdown by remember { mutableStateOf(0) }
+    var codeCountdownKey by remember { mutableStateOf(0) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -84,6 +87,7 @@ fun ProfileScreen(
                 showEmailCodeDialog = false
                 emailCodePurpose = null
                 emailCodeInput = ""
+                codeCountdown = 0
                 authViewModel.onProfileEventConsumed()
             }
             is AuthViewModel.AuthState.PasswordUpdateSuccess -> {
@@ -91,12 +95,15 @@ fun ProfileScreen(
                 showEmailCodeDialog = false
                 emailCodePurpose = null
                 emailCodeInput = ""
+                codeCountdown = 0
             }
             is AuthViewModel.AuthState.EmailCodeRequired -> {
                 if (state.purpose == AuthViewModel.VerificationPurpose.UPDATE_PASSWORD || state.purpose == AuthViewModel.VerificationPurpose.UPDATE_SECURITY_QUESTION) {
                     emailCodePurpose = state.purpose
                     emailCodeInput = ""
                     showEmailCodeDialog = true
+                    codeCountdown = 60
+                    codeCountdownKey += 1
                     state.reason?.let { scope.launch { snackbarHostState.showSnackbar(it) } }
                 }
             }
@@ -104,10 +111,19 @@ fun ProfileScreen(
                 if (state.purpose == AuthViewModel.VerificationPurpose.UPDATE_PASSWORD || state.purpose == AuthViewModel.VerificationPurpose.UPDATE_SECURITY_QUESTION) {
                     emailCodePurpose = state.purpose
                     showEmailCodeDialog = true
+                    codeCountdown = 60
+                    codeCountdownKey += 1
                     scope.launch { snackbarHostState.showSnackbar("验证码已发送至邮箱，请查收") }
                 }
             }
             else -> {}
+        }
+    }
+
+    LaunchedEffect(codeCountdownKey) {
+        while (codeCountdown > 0) {
+            delay(1000)
+            codeCountdown = (codeCountdown - 1).coerceAtLeast(0)
         }
     }
 
@@ -221,8 +237,10 @@ fun ProfileScreen(
                 onDismiss = {
                     showEmailCodeDialog = false
                     emailCodeInput = ""
+                    codeCountdown = 0
                 },
-                isLoading = authState is AuthViewModel.AuthState.Loading
+                isLoading = authState is AuthViewModel.AuthState.Loading,
+                codeCountdown = codeCountdown
             )
         }
     }
@@ -265,7 +283,8 @@ private fun EmailCodeDialog(
     onConfirm: () -> Unit,
     onResend: () -> Unit,
     onDismiss: () -> Unit,
-    isLoading: Boolean
+    isLoading: Boolean,
+    codeCountdown: Int
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -296,7 +315,9 @@ private fun EmailCodeDialog(
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onResend, enabled = !isLoading) { Text("重发") }
+                TextButton(onClick = onResend, enabled = !isLoading && codeCountdown == 0) {
+                    Text(if (codeCountdown == 0) "重发" else "重发(${codeCountdown}s)")
+                }
                 TextButton(onClick = onDismiss) { Text("取消") }
             }
         }

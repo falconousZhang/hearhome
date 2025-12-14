@@ -182,18 +182,31 @@ object ApiService {
             setBody(ResetQuestionRequest(email.trim()))
         }
 
-    /** Step3：提交答案 + 新密码 */
-    suspend fun resetPasswordByAnswer(email: String, answer: String, newPassword: String): HttpResponse =
-        client.post("$BASE_URL/users/reset-password") {
+    /** Step0：发送重置验证码 */
+    suspend fun sendResetPasswordCode(email: String): HttpResponse =
+        client.post("$BASE_URL/users/reset-password/send-code") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword))
+            setBody(ResetPasswordSendCodeRequest(email.trim()))
         }
 
-    /** Step3（邮箱验证码路径）：提交验证码 + 新密码 */
-    suspend fun resetPasswordByEmailCode(email: String, code: String, newPassword: String): HttpResponse =
-        client.post("$BASE_URL/users/reset-password/email") {
+    /** Step3：安全问题路径，提交答案 + 新密码 + 新邮箱 */
+    suspend fun resetPasswordByAnswer(
+        email: String,
+        answer: String,
+        newPassword: String,
+        confirmPassword: String,
+        newEmail: String?
+    ): HttpResponse =
+        client.post("$BASE_URL/users/reset-password") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordByEmailRequest(email.trim(), code.trim(), newPassword))
+            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword, confirmPassword, newEmail))
+        }
+
+    /** Step3（邮箱验证码路径）：提交验证码 + 新密码 + 确认密码 */
+    suspend fun resetPasswordByEmailCode(email: String, code: String, newPassword: String, confirmPassword: String): HttpResponse =
+        client.post("$BASE_URL/users/reset-password") {
+            contentType(ContentType.Application.Json)
+            setBody(ResetPasswordByEmailRequest(email.trim(), code.trim(), newPassword, confirmPassword))
         }
 
     // ============================ 个人中心：密码/密保 ============================

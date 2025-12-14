@@ -61,7 +61,7 @@ class AuthViewModel(
     private var currentSecQuestion: String? = null
     private var resetAnswerPlain: String? = null
     private var pendingResetEmail: String? = null
-    private var verifiedResetCode: String? = null
+    private var pendingResetCode: String? = null
 
     private var pendingPasswordUpdate: PendingPasswordUpdate? = null
     private var pendingSecurityQuestionUpdate: PendingSecurityQuestionUpdate? = null
@@ -69,8 +69,8 @@ class AuthViewModel(
     /** ===== 给 MainActivity / LoginScreen 清一次性状态 ===== */
     fun resetAuthResult() {
         _authState.value = AuthState.Idle
-        verifiedResetCode = null
         resetAnswerPlain = null
+        pendingResetCode = null
         pendingPasswordUpdate = null
         pendingSecurityQuestionUpdate = null
         pendingResetEmail = null
@@ -232,12 +232,12 @@ class AuthViewModel(
         viewModelScope.launch {
             if (email.isBlank()) { _authState.value = AuthState.Error("请填写邮箱"); return@launch }
             pendingResetEmail = email.trim()
-            verifiedResetCode = null
+            pendingResetCode = null
             resetAnswerPlain = null
             currentSecQuestion = null
             _authState.value = AuthState.Loading
             try {
-                val resp = ApiService.requestEmailVerification(email.trim(), VerificationPurpose.RESET_PASSWORD.asServerValue())
+                val resp = ApiService.sendResetPasswordCode(email.trim())
                 when (resp.status) {
                     HttpStatusCode.OK, HttpStatusCode.Accepted -> _authState.value = AuthState.EmailCodeSent(email.trim(), VerificationPurpose.RESET_PASSWORD)
                     else -> handleRiskResponse(
@@ -292,31 +292,24 @@ class AuthViewModel(
         return true
     }
 
-    /** ===== 忘记密码 Step 3：提交到后端校验并重置（邮箱验证码优先） ===== */
-    fun setNewPassword(newPassword: String) {
+    /** ===== 忘记密码 Step 2（邮箱验证码路径）：暂存验证码 */
+    fun cacheResetEmailCode(code: String) { pendingResetCode = code }
+
+    /** ===== 忘记密码 Step 3：提交到后端校验并重置（邮箱验证码路径） ===== */
+    fun resetPasswordWithEmailCode(newPassword: String, confirmPassword: String) {
         viewModelScope.launch {
-            val email = pendingResetEmail ?: currentEmailForReset
+            val email = pendingResetEmail
+            val code = pendingResetCode
             if (email.isNullOrBlank()) { _authState.value = AuthState.Error("流程异常，请重试"); return@launch }
+            if (code.isNullOrBlank()) { _authState.value = AuthState.Error("请先填写验证码"); return@launch }
             if (newPassword.length < 6) { _authState.value = AuthState.Error("新密码至少 6 位"); return@launch }
+            if (newPassword != confirmPassword) { _authState.value = AuthState.Error("两次输入的新密码不一致"); return@launch }
 
             _authState.value = AuthState.Loading
             try {
-                val resp = when {
-                    !verifiedResetCode.isNullOrBlank() -> ApiService.resetPasswordByEmailCode(email, verifiedResetCode!!, newPassword)
-                    !resetAnswerPlain.isNullOrBlank() -> ApiService.resetPasswordByAnswer(email, resetAnswerPlain!!.trim(), newPassword)
-                    else -> {
-                        _authState.value = AuthState.Error("请先完成邮箱或密保验证"); return@launch
-                    }
-                }
+                val resp = ApiService.resetPasswordByEmailCode(email, code, newPassword, confirmPassword)
                 when (resp.status) {
-                    HttpStatusCode.OK -> {
-                        currentEmailForReset = null
-                        currentSecQuestion = null
-                        resetAnswerPlain = null
-                        verifiedResetCode = null
-                        pendingResetEmail = null
-                        _authState.value = AuthState.PasswordResetSuccess
-                    }
+                    HttpStatusCode.OK -> clearResetStateAfterSuccess()
                     HttpStatusCode.BadRequest, HttpStatusCode.NotFound -> {
                         val gr = resp.body<com.example.hearhome.data.remote.GenericResponse>()
                         _authState.value = AuthState.Error(gr.message)
@@ -327,6 +320,42 @@ class AuthViewModel(
                 _authState.value = AuthState.Error("重置失败：${e.message}")
             }
         }
+    }
+
+    /** ===== 忘记密码 Step 3：提交到后端校验并重置（密保 + 新邮箱） ===== */
+    fun resetPasswordWithSecurityQuestion(answer: String, newPassword: String, confirmPassword: String, newEmail: String) {
+        viewModelScope.launch {
+            val email = pendingResetEmail ?: currentEmailForReset
+            if (email.isNullOrBlank()) { _authState.value = AuthState.Error("请先输入邮箱"); return@launch }
+            if (newEmail.isBlank()) { _authState.value = AuthState.Error("请填写新的可用邮箱"); return@launch }
+            if (answer.isBlank()) { _authState.value = AuthState.Error("请输入密保答案"); return@launch }
+            if (newPassword.length < 6) { _authState.value = AuthState.Error("新密码至少 6 位"); return@launch }
+            if (newPassword != confirmPassword) { _authState.value = AuthState.Error("两次输入的新密码不一致"); return@launch }
+
+            _authState.value = AuthState.Loading
+            try {
+                val resp = ApiService.resetPasswordByAnswer(email, answer.trim(), newPassword, confirmPassword, newEmail.trim())
+                when (resp.status) {
+                    HttpStatusCode.OK -> clearResetStateAfterSuccess()
+                    HttpStatusCode.BadRequest, HttpStatusCode.NotFound -> {
+                        val gr = resp.body<com.example.hearhome.data.remote.GenericResponse>()
+                        _authState.value = AuthState.Error(gr.message)
+                    }
+                    else -> _authState.value = AuthState.Error("重置失败：${resp.status.value}")
+                }
+            } catch (e: Exception) {
+                _authState.value = AuthState.Error("重置失败：${e.message}")
+            }
+        }
+    }
+
+    private fun clearResetStateAfterSuccess() {
+        currentEmailForReset = null
+        currentSecQuestion = null
+        resetAnswerPlain = null
+        pendingResetEmail = null
+        pendingResetCode = null
+        _authState.value = AuthState.PasswordResetSuccess
     }
 
     /** 发送或重发验证码（UI 复用） */
@@ -366,7 +395,7 @@ class AuthViewModel(
                         VerificationPurpose.UPDATE_PASSWORD -> completePendingPasswordUpdate(code)
                         VerificationPurpose.UPDATE_SECURITY_QUESTION -> completePendingSecurityQuestionUpdate(code)
                         VerificationPurpose.RESET_PASSWORD -> {
-                            verifiedResetCode = code
+                            pendingResetCode = code
                             _authState.value = AuthState.EmailCodeVerified(email, pendingPurpose)
                         }
                     }

@@ -42,20 +42,30 @@ data class ResetQuestionRequest(
     val email: String
 )
 
-/** 忘记密码：提交答案 + 新密码 */
+/** 忘记密码：提交答案 + 新密码（安全问题路径） */
 @Serializable
 data class ResetPasswordRequest(
     val email: String,
     val answer: String,
-    val newPassword: String
+    val newPassword: String,
+    val confirmPassword: String,
+    val newEmail: String? = null,
+    val method: String = "SECURITY_QUESTION"
 )
 
 /** 忘记密码：邮箱验证码 + 新密码 */
 @Serializable
 data class ResetPasswordByEmailRequest(
     val email: String,
-    val code: String,
-    val newPassword: String
+    val emailCode: String,
+    val newPassword: String,
+    val confirmPassword: String
+)
+
+/** 忘记密码：发送验证码 */
+@Serializable
+data class ResetPasswordSendCodeRequest(
+    val email: String
 )
 
 /** 请求发送邮箱验证码 */

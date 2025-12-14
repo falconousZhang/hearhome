@@ -102,6 +102,9 @@ private fun ForgotPasswordDialog(
     var newPwd by remember { mutableStateOf("") }
     var confirmPwd by remember { mutableStateOf("") }
     var fieldError by remember { mutableStateOf<String?>(null) }
+    var newEmail by remember { mutableStateOf("") }
+    var countdown by remember { mutableStateOf(0) }
+    var countdownKey by remember { mutableStateOf(0) }
 
     val question = viewModel.getCurrentResetQuestion()
     val globalError = (authState as? AuthViewModel.AuthState.Error)?.message
@@ -113,10 +116,12 @@ private fun ForgotPasswordDialog(
                 mode = ResetMode.EMAIL
                 step = 2
                 fieldError = null
+                countdown = 60
+                countdownKey += 1
             }
             is AuthViewModel.AuthState.EmailCodeVerified -> if (state.purpose == AuthViewModel.VerificationPurpose.RESET_PASSWORD) {
                 mode = ResetMode.EMAIL
-                step = 3
+                step = 2
                 fieldError = null
             }
             is AuthViewModel.AuthState.SecurityQuestionRequired -> {
@@ -125,9 +130,20 @@ private fun ForgotPasswordDialog(
                 fieldError = null
             }
             is AuthViewModel.AuthState.PasswordResetSuccess -> {
-                step = 3
+                step = 2
             }
             else -> {}
+        }
+    }
+
+    LaunchedEffect(countdownKey) {
+        if (countdown > 0) {
+            var value = countdown
+            while (value > 0) {
+                kotlinx.coroutines.delay(1000)
+                value -= 1
+                countdown = value
+            }
         }
     }
 
@@ -168,11 +184,6 @@ private fun ForgotPasswordDialog(
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Spacer(Modifier.height(8.dp))
-                            TextButton(onClick = { viewModel.resendEmailCode(AuthViewModel.VerificationPurpose.RESET_PASSWORD) }, enabled = !isLoading) {
-                                Text("收不到？重发验证码")
-                            }
-                        }
-                        else -> {
                             OutlinedTextField(
                                 value = newPwd,
                                 onValueChange = { newPwd = it; fieldError = null },
@@ -190,6 +201,24 @@ private fun ForgotPasswordDialog(
                                 isError = !fieldError.isNullOrBlank(),
                                 modifier = Modifier.fillMaxWidth()
                             )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                TextButton(onClick = {
+                                    if (resetEmail.isNotBlank()) viewModel.startResetByEmail(resetEmail.trim())
+                                    countdown = 60; countdownKey += 1
+                                }, enabled = !isLoading && countdown == 0) {
+                                    Text(if (countdown > 0) "重发(${countdown}s)" else "收不到？重发验证码")
+                                }
+                                TextButton(onClick = {
+                                    if (resetEmail.isBlank()) {
+                                        fieldError = "请先输入注册邮箱"
+                                    } else {
+                                        viewModel.startResetByQuestion(resetEmail.trim())
+                                        mode = ResetMode.SECURITY_QUESTION
+                                        step = 2
+                                    }
+                                }) { Text("邮箱不可用？用密保") }
+                            }
                             fieldError?.let {
                                 Spacer(Modifier.height(8.dp))
                                 Text(it, color = MaterialTheme.colorScheme.error)
@@ -210,6 +239,14 @@ private fun ForgotPasswordDialog(
                                 value = answer,
                                 onValueChange = { answer = it; fieldError = null },
                                 label = { Text("答案") },
+                                isError = !fieldError.isNullOrBlank(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = newEmail,
+                                onValueChange = { newEmail = it; fieldError = null },
+                                label = { Text("新的可用邮箱") },
                                 isError = !fieldError.isNullOrBlank(),
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -271,38 +308,35 @@ private fun ForgotPasswordDialog(
                                     }
                                 }
                                 2 -> {
-                                    if (emailCode.isBlank()) {
-                                        fieldError = "请输入验证码"
-                                    } else {
-                                        viewModel.verifyEmailCode(emailCode.trim())
-                                    }
-                                }
-                                else -> {
                                     fieldError = validatePassword()
-                                    if (fieldError == null) viewModel.setNewPassword(newPwd)
+                                    when {
+                                        emailCode.isBlank() -> fieldError = "请输入验证码"
+                                        fieldError != null -> {}
+                                        else -> {
+                                            viewModel.cacheResetEmailCode(emailCode.trim())
+                                            viewModel.resetPasswordWithEmailCode(newPwd, confirmPwd)
+                                        }
+                                    }
                                 }
                             }
                             ResetMode.SECURITY_QUESTION -> when (step) {
-                                1 -> viewModel.startResetByQuestion(resetEmail.trim())
                                 2 -> {
                                     if (answer.isBlank()) {
                                         fieldError = "请输入答案"
+                                    } else if (newEmail.isBlank()) {
+                                        fieldError = "请输入新的可用邮箱"
                                     } else {
                                         viewModel.verifyAnswer(answer)
-                                        step = 3
+                                        viewModel.resetPasswordWithSecurityQuestion(answer, newPwd, confirmPwd, newEmail)
                                     }
-                                }
-                                else -> {
-                                    fieldError = validatePassword()
-                                    if (fieldError == null) viewModel.setNewPassword(newPwd)
                                 }
                             }
                         }
                     }) {
                         Text(
                             when (mode) {
-                                ResetMode.EMAIL -> when (step) { 1 -> "发送验证码"; 2 -> "验证"; else -> "提交新密码" }
-                                ResetMode.SECURITY_QUESTION -> when (step) { 2 -> "验证答案"; else -> "提交新密码" }
+                                ResetMode.EMAIL -> when (step) { 1 -> "发送验证码"; else -> "提交新密码" }
+                                ResetMode.SECURITY_QUESTION -> "提交"
                             }
                         )
                     }
