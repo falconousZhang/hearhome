@@ -106,7 +106,6 @@ private fun ForgotPasswordDialog(
     var countdown by remember { mutableStateOf(0) }
     var countdownKey by remember { mutableStateOf(0) }
     var checkingAnswer by remember { mutableStateOf(false) }
-                        2 -> {
     val question = viewModel.getCurrentResetQuestion()
     val globalError = (authState as? AuthViewModel.AuthState.Error)?.message
     val isLoading = authState is AuthViewModel.AuthState.Loading
