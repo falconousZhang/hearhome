@@ -50,7 +50,7 @@ data class ResetPasswordRequest(
     val newPassword: String,
     val confirmPassword: String,
     val newEmail: String? = null,
-    val method: String = "SECURITY_QUESTION"
+    val method: String
 )
 
 /** 忘记密码：邮箱验证码 + 新密码 */

@@ -170,6 +170,17 @@ private fun ForgotPasswordDialog(
                             )
                             Spacer(Modifier.height(8.dp))
                             Text("优先通过邮箱验证码完成身份验证。")
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = {
+                                if (resetEmail.isBlank()) {
+                                    fieldError = "请输入注册邮箱"
+                                } else {
+                                    viewModel.startResetByQuestion(resetEmail.trim())
+                                    mode = ResetMode.SECURITY_QUESTION
+                                    step = 2
+                                    fieldError = null
+                                }
+                            }) { Text("邮箱不可用？用密保") }
                             fieldError?.let {
                                 Spacer(Modifier.height(8.dp))
                                 Text(it, color = MaterialTheme.colorScheme.error)
@@ -227,11 +238,6 @@ private fun ForgotPasswordDialog(
                     }
                     ResetMode.SECURITY_QUESTION -> when (step) {
                         2 -> {
-                            Text(
-                                text = "邮箱不可用？已切换到密保问题验证，由后端返回的 USE_SECURITY_QUESTION 触发。",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                             Spacer(Modifier.height(8.dp))
                             Text(text = "使用密保问题验证：${question ?: ""}")
                             Spacer(Modifier.height(8.dp))
@@ -242,7 +248,12 @@ private fun ForgotPasswordDialog(
                                 isError = !fieldError.isNullOrBlank(),
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            Spacer(Modifier.height(8.dp))
+                            fieldError?.let {
+                                Spacer(Modifier.height(8.dp))
+                                Text(it, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        3 -> {
                             OutlinedTextField(
                                 value = newEmail,
                                 onValueChange = { newEmail = it; fieldError = null },
@@ -250,12 +261,7 @@ private fun ForgotPasswordDialog(
                                 isError = !fieldError.isNullOrBlank(),
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            fieldError?.let {
-                                Spacer(Modifier.height(8.dp))
-                                Text(it, color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                        else -> {
+                            Spacer(Modifier.height(8.dp))
                             OutlinedTextField(
                                 value = newPwd,
                                 onValueChange = { newPwd = it; fieldError = null },
@@ -323,11 +329,18 @@ private fun ForgotPasswordDialog(
                                 2 -> {
                                     if (answer.isBlank()) {
                                         fieldError = "请输入答案"
-                                    } else if (newEmail.isBlank()) {
-                                        fieldError = "请输入新的可用邮箱"
                                     } else {
-                                        viewModel.verifyAnswer(answer)
-                                        viewModel.resetPasswordWithSecurityQuestion(answer, newPwd, confirmPwd, newEmail)
+                                        viewModel.verifyAnswer(answer.trim())
+                                        fieldError = null
+                                        step = 3
+                                    }
+                                }
+                                3 -> {
+                                    fieldError = validatePassword()
+                                    when {
+                                        newEmail.isBlank() -> fieldError = "请输入新的可用邮箱"
+                                        fieldError != null -> {}
+                                        else -> viewModel.resetPasswordWithSecurityQuestion(answer, newPwd, confirmPwd, newEmail)
                                     }
                                 }
                             }
@@ -336,7 +349,7 @@ private fun ForgotPasswordDialog(
                         Text(
                             when (mode) {
                                 ResetMode.EMAIL -> when (step) { 1 -> "发送验证码"; else -> "提交新密码" }
-                                ResetMode.SECURITY_QUESTION -> "提交"
+                                ResetMode.SECURITY_QUESTION -> when (step) { 2 -> "下一步"; else -> "提交新密码" }
                             }
                         )
                     }

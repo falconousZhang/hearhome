@@ -133,6 +133,8 @@ data class PostMention(
 data class CoupleRequest(val requesterId: Int, val partnerId: Int)
 
 object ApiService {
+    private const val FORCE_RISK_HEADER = "X-Force-Risk"
+    private const val FORCE_RISK_VALUE = "true"
     private const val BASE_URL = "http://121.37.136.244:8080/"   //http://10.0.2.2:8080
 
     private val json = Json {
@@ -199,7 +201,7 @@ object ApiService {
     ): HttpResponse =
         client.post("$BASE_URL/users/reset-password") {
             contentType(ContentType.Application.Json)
-            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword, confirmPassword, newEmail))
+            setBody(ResetPasswordRequest(email.trim(), answer.trim(), newPassword, confirmPassword, newEmail, method = "SECURITY_QUESTION"))
         }
 
     /** Step3（邮箱验证码路径）：提交验证码 + 新密码 + 确认密码 */
@@ -220,6 +222,7 @@ object ApiService {
         verificationToken: String? = null
     ): HttpResponse =
         client.post("$BASE_URL/users/update-password") {
+            header(FORCE_RISK_HEADER, FORCE_RISK_VALUE)
             contentType(ContentType.Application.Json)
             setBody(UpdatePasswordRequest(email, oldPassword, newPassword, securityAnswer, emailCode, verificationToken))
         }
@@ -234,6 +237,7 @@ object ApiService {
         verificationToken: String? = null
     ): HttpResponse =
         client.post("$BASE_URL/users/update-security-question") {
+            header(FORCE_RISK_HEADER, FORCE_RISK_VALUE)
             contentType(ContentType.Application.Json)
             setBody(UpdateSecurityQuestionRequest(email, password, question, answer, emailCode, verificationToken))
         }

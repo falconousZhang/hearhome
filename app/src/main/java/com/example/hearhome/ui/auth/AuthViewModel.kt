@@ -205,6 +205,7 @@ class AuthViewModel(
             if (password.isBlank() || question.isBlank() || answer.isBlank()) {
                 _authState.value = AuthState.Error("密码、问题和答案均不能为空"); return@launch
             }
+
             _authState.value = AuthState.Loading
             try {
                 val resp = ApiService.updateSecurityQuestion(email.trim(), password, question.trim(), answer.trim())
@@ -478,6 +479,7 @@ class AuthViewModel(
         val gr = resp.tryBodyOrNull<GenericResponse>()
         val message = gr?.message
         when {
+            resp.status == HttpStatusCode.Forbidden -> onNeedEmail(message ?: "需要邮箱验证码验证")
             requiresEmailVerification(message) -> onNeedEmail(message)
             requiresSecurityQuestion(message) -> onNeedSecurityQuestion?.invoke(message)
             else -> _authState.value = AuthState.Error(message ?: "请求失败：${resp.status.value}")
