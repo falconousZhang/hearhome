@@ -158,4 +158,7 @@ interface SpaceDao {
     
     @Query("SELECT MAX(timestamp) FROM space_posts WHERE spaceId = :spaceId AND authorId = :userId AND status = 'normal'")
     suspend fun getLastPostTimeByUser(spaceId: Int, userId: Int): Long?
+    
+    @Query("SELECT * FROM spaces WHERE status = 'active'")
+    suspend fun getAllSpaces(): List<Space>
 }

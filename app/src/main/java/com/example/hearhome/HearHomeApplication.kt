@@ -6,6 +6,7 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
+import com.example.hearhome.worker.PetTickWorker
 
 /**
  * 应用程序类
@@ -15,6 +16,9 @@ class HearHomeApplication : Application(), ImageLoaderFactory {
     
     override fun onCreate() {
         super.onCreate()
+        
+        // 启动宠物定时衰减任务
+        PetTickWorker.schedule(this)
     }
     
     /**
