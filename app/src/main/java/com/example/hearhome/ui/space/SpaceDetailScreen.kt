@@ -41,6 +41,7 @@ import java.util.Locale
 import kotlin.math.max
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import com.example.hearhome.pet.PetViewModel
 /**
  * 空间详情界面
  * 顶部新增：纪念日倒计时卡片
@@ -77,6 +78,10 @@ fun SpaceDetailScreen(
             currentUserId,
             context
         )
+    )
+    // 宠物 VM
+    val petViewModel: PetViewModel = viewModel(
+        key = "pet_$spaceId"
     )
 
     // 启动前端轮询刷新，避免改后端接口
@@ -255,6 +260,15 @@ fun SpaceDetailScreen(
                     onManage = { navController.navigate("anniversary/$spaceId/$currentUserId") }
                 )
             }
+            
+            // 宠物卡片
+            item {
+                SpacePetCard(
+                    spaceId = spaceId,
+                    petViewModel = petViewModel
+                )
+            }
+            
             // 空间信息（含打卡状态）
             item {
                 currentSpace?.let { space ->

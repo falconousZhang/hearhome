@@ -126,6 +126,32 @@ data class PostMention(
     val status: String = "pending"
 )
 
+@Serializable
+data class ApiPetAttributes(
+    val mood: Int = 50,
+    val health: Int = 80,
+    val energy: Int = 60,
+    val hydration: Int = 60,
+    val intimacy: Int = 50
+)
+
+@Serializable
+data class ApiSpacePet(
+    val id: Int = 0,
+    val spaceId: Int,
+    val name: String,
+    val type: String = "pet",
+    val attributes: ApiPetAttributes,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class ApiSpacePetRequest(
+    val name: String? = null,
+    val type: String? = null,
+    val attributes: ApiPetAttributes
+)
+
 
 // --- API Service Singleton ---
 
@@ -336,6 +362,17 @@ object ApiService {
             contentType(ContentType.Application.Json)
             setBody(request)
         }
+    }
+
+    suspend fun getSpacePet(spaceId: Int): ApiSpacePet {
+        return client.get("$BASE_URL/space/$spaceId/pet").body()
+    }
+
+    suspend fun saveSpacePet(spaceId: Int, request: ApiSpacePetRequest): ApiSpacePet {
+        return client.post("$BASE_URL/space/$spaceId/pet") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }.body()
     }
 
     suspend fun getSpaceMembers(spaceId: Int): List<ApiSpaceMember> {
