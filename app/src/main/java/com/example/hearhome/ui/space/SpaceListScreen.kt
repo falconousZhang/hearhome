@@ -8,7 +8,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Schedule
@@ -75,6 +74,7 @@ fun SpaceListScreen(
     // 对话框状态
     var showCreateDialog by remember { mutableStateOf(false) }
     var showJoinDialog by remember { mutableStateOf(false) }
+    var joinErrorMessage by remember { mutableStateOf<String?>(null) }
 
     // 从 API 加载情侣候选人（好友列表和当前用户信息）
     LaunchedEffect(showCreateDialog) {
@@ -200,21 +200,21 @@ fun SpaceListScreen(
                             }
                         }
                     }
-                    IconButton(onClick = { showJoinDialog = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "加入空间"
-                        )
+                    TextButton(onClick = {
+                        joinErrorMessage = null
+                        showJoinDialog = true
+                    }) {
+                        Text("加入空间")
                     }
                 }
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = { showCreateDialog = true }
-            ) {
-                Icon(Icons.Default.Add, "创建空间")
-            }
+            ExtendedFloatingActionButton(
+                onClick = { showCreateDialog = true },
+                icon = {},
+                text = { Text("创建空间") }
+            )
         },
         bottomBar = {
             AppBottomNavigation(
@@ -309,25 +309,32 @@ fun SpaceListScreen(
     // 加入空间对话框
     if (showJoinDialog) {
         JoinSpaceDialog(
-            onDismiss = { showJoinDialog = false },
+            onDismiss = {
+                joinErrorMessage = null
+                showJoinDialog = false
+            },
             onJoin = { inviteCode ->
                 scope.launch {
                     when (val result = viewModel.joinSpaceByCode(inviteCode)) {
                         is JoinSpaceResult.Joined -> {
+                            joinErrorMessage = null
                             showJoinDialog = false
                             val message = result.message ?: "成功加入「${result.space.name}」"
                             snackbarHostState.showSnackbar(message)
                         }
                         is JoinSpaceResult.RequestPending -> {
+                            joinErrorMessage = null
                             showJoinDialog = false
                             snackbarHostState.showSnackbar(result.message)
                         }
                         is JoinSpaceResult.Failure -> {
-                            snackbarHostState.showSnackbar(result.message)
+                            joinErrorMessage = result.message
                         }
                     }
                 }
-            }
+            },
+            errorMessage = joinErrorMessage,
+            onInputEdited = { joinErrorMessage = null }
         )
     }
 }
@@ -790,7 +797,9 @@ fun CreateSpaceDialog(
 @Composable
 fun JoinSpaceDialog(
     onDismiss: () -> Unit,
-    onJoin: (String) -> Unit
+    onJoin: (String) -> Unit,
+    errorMessage: String?,
+    onInputEdited: () -> Unit
 ) {
     var inviteCode by remember { mutableStateOf("") }
     
@@ -807,14 +816,26 @@ fun JoinSpaceDialog(
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = inviteCode,
-                    onValueChange = { 
-                        if (it.length <= 6 && it.all { c -> c.isDigit() }) {
-                            inviteCode = it
+                    onValueChange = { raw ->
+                        val sanitized = raw.filter { it.isDigit() }.take(6)
+                        if (sanitized != inviteCode) {
+                            inviteCode = sanitized
+                            onInputEdited()
                         }
                     },
                     label = { Text("邀请码") },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    isError = errorMessage != null,
+                    supportingText = {
+                        if (errorMessage != null) {
+                            Text(
+                                text = errorMessage,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
                 )
             }
         },

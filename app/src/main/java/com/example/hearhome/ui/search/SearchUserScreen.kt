@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.delay
 import com.example.hearhome.data.local.User
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.ui.friend.FriendViewModel
@@ -36,24 +38,48 @@ fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
     val coupleState by coupleViewModel.uiState.collectAsState()
 
     var keyword by remember { mutableStateOf("") }
-    val snackbarHostState = remember { SnackbarHostState() }
-    
-    // 监听情侣请求的成功/失败消息
-    LaunchedEffect(coupleState.successMessage) {
-        coupleState.successMessage?.let {
-            snackbarHostState.showSnackbar(it)
-            coupleViewModel.clearMessages()
+    var feedbackMessage by remember { mutableStateOf<String?>(null) }
+    var feedbackIsError by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiState.actionMessage) {
+        uiState.actionMessage?.let {
+            feedbackMessage = it
+            feedbackIsError = false
+            friendViewModel.clearMessages()
         }
     }
-    
-    LaunchedEffect(coupleState.error) {
-        coupleState.error?.let {
-            snackbarHostState.showSnackbar("错误: $it")
+
+    LaunchedEffect(uiState.actionError) {
+        uiState.actionError?.let {
+            feedbackMessage = it
+            feedbackIsError = true
+            friendViewModel.clearMessages()
+        }
+    }
+
+    LaunchedEffect(coupleState.successMessage) {
+        coupleState.successMessage?.let {
+            feedbackMessage = it
+            feedbackIsError = false
             coupleViewModel.clearMessages()
         }
     }
 
-    // 当屏幕被销毁时，清除搜索结果
+    LaunchedEffect(coupleState.error) {
+        coupleState.error?.let {
+            feedbackMessage = it
+            feedbackIsError = true
+            coupleViewModel.clearMessages()
+        }
+    }
+    LaunchedEffect(feedbackMessage) {
+        val message = feedbackMessage ?: return@LaunchedEffect
+        delay(3500)
+        if (feedbackMessage == message) {
+            feedbackMessage = null
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             friendViewModel.clearSearch()
@@ -70,8 +96,7 @@ fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
                     }
                 }
             )
-        },
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) }
+        }
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -104,44 +129,93 @@ fun SearchUserScreen(navController: NavHostController, currentUserId: Int) {
                 }) { Text("清空") }
             }
 
+            feedbackMessage?.let { message ->
+                val containerColor = if (feedbackIsError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+                val contentColor = if (feedbackIsError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
+
+                Surface(
+                    color = containerColor,
+                    contentColor = contentColor,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = { feedbackMessage = null }) {
+                            Icon(Icons.Default.Close, contentDescription = "关闭提示")
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
 
-            when {
-                uiState.isLoading -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator()
-                    }
+            if (uiState.isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
                 }
-                uiState.searchCompleted && uiState.searchedUser == null -> {
-                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("未找到该用户", color = MaterialTheme.colorScheme.error)
-                    }
+            } else {
+                val targetUser = uiState.searchedUser?.takeIf { it.uid != currentUserId }
+                val searchMessage = when {
+                    uiState.searchCompleted && uiState.searchedUser == null -> "未找到该用户"
+                    uiState.searchedUser?.uid == currentUserId -> "不能添加自己为好友"
+                    else -> null
                 }
-                uiState.searchedUser != null -> {
-                    if (uiState.searchedUser!!.uid == currentUserId) {
-                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("不能添加自己为好友")
-                        }
-                    } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            item { 
+
+                uiState.error?.let { errorMessage ->
+                    Text(
+                        text = "搜索出错: $errorMessage",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp)
+                    )
+                } ?: run {
+                    if (searchMessage != null) {
+                        Text(
+                            text = searchMessage,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 12.dp)
+                        )
+                    }
+
+                    if (targetUser != null) {
+                        Spacer(Modifier.height(16.dp))
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            item {
                                 UserCard(
-                                    user = uiState.searchedUser!!,
+                                    user = targetUser,
                                     onAddFriend = {
-                                        friendViewModel.sendFriendRequest(currentUserId, uiState.searchedUser!!.uid)
-                                        Toast.makeText(context, "好友请求已发送", Toast.LENGTH_SHORT).show()
+                                        friendViewModel.sendFriendRequest(currentUserId, targetUser.uid)
                                     },
                                     onSendCoupleRequest = {
-                                        coupleViewModel.sendCoupleRequest(currentUserId, uiState.searchedUser!!.uid)
+                                        coupleViewModel.sendCoupleRequest(currentUserId, targetUser.uid)
                                     }
                                 )
                             }
                         }
-                    }
-                }
-                 uiState.error != null -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("搜索出错: ${uiState.error}", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }

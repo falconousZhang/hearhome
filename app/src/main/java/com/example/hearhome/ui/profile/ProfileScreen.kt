@@ -26,7 +26,6 @@ import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.ui.auth.AuthViewModel
 import com.example.hearhome.ui.components.AppBottomNavigation
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,7 +64,6 @@ fun ProfileScreen(
     var codeCountdownKey by remember { mutableStateOf(0) }
 
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
     val authState by authViewModel.authState.collectAsState()
 
     LaunchedEffect(user) {
@@ -77,11 +75,13 @@ fun ProfileScreen(
     LaunchedEffect(authState) {
         when (val state = authState) {
             is AuthViewModel.AuthState.Error -> {
-                scope.launch { snackbarHostState.showSnackbar(state.message) }
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar(state.message)
                 authViewModel.onProfileEventConsumed()
             }
             is AuthViewModel.AuthState.UpdateSuccess -> {
-                scope.launch { snackbarHostState.showSnackbar("私密问题更新成功！") }
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar("私密问题修改成功")
                 securityAnswerForSQ = ""
                 passwordForSQ = ""
                 showEmailCodeDialog = false
@@ -91,7 +91,8 @@ fun ProfileScreen(
                 authViewModel.onProfileEventConsumed()
             }
             is AuthViewModel.AuthState.PasswordUpdateSuccess -> {
-                scope.launch { snackbarHostState.showSnackbar("密码修改成功，请重新登录") }
+                snackbarHostState.currentSnackbarData?.dismiss()
+                snackbarHostState.showSnackbar("密码修改成功，请重新登录")
                 showEmailCodeDialog = false
                 emailCodePurpose = null
                 emailCodeInput = ""
@@ -104,7 +105,10 @@ fun ProfileScreen(
                     showEmailCodeDialog = true
                     codeCountdown = 60
                     codeCountdownKey += 1
-                    state.reason?.let { scope.launch { snackbarHostState.showSnackbar(it) } }
+                    state.reason?.let { reason ->
+                        snackbarHostState.currentSnackbarData?.dismiss()
+                        snackbarHostState.showSnackbar(reason)
+                    }
                 }
             }
             is AuthViewModel.AuthState.EmailCodeSent -> {
@@ -113,7 +117,8 @@ fun ProfileScreen(
                     showEmailCodeDialog = true
                     codeCountdown = 60
                     codeCountdownKey += 1
-                    scope.launch { snackbarHostState.showSnackbar("验证码已发送至邮箱，请查收") }
+                    snackbarHostState.currentSnackbarData?.dismiss()
+                    snackbarHostState.showSnackbar("验证码已发送至邮箱，请查收")
                 }
             }
             else -> {}
@@ -190,10 +195,21 @@ fun ProfileScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(value = confirmPassword, onValueChange = { confirmPassword = it }, label = { Text("确认新密码") }, visualTransformation = if (confirmPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(), trailingIcon = { IconButton(onClick = { confirmPasswordVisible = !confirmPasswordVisible }) { Icon(imageVector = if (confirmPasswordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, "Toggle password visibility") } }, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = { authViewModel.updatePassword(email = user.email, oldPassword = oldPassword, newPassword = newPassword, confirmPassword = confirmPassword) }, modifier = Modifier.fillMaxWidth()) { Text("确认修改密码") }
+                Button(
+                    onClick = {
+                        authViewModel.updatePassword(
+                            email = user.email,
+                            oldPassword = oldPassword,
+                            newPassword = newPassword,
+                            confirmPassword = confirmPassword
+                        )
+                    },
+                    enabled = authState !is AuthViewModel.AuthState.Loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("确认修改密码") }
 
                 Spacer(modifier = Modifier.height(32.dp))
-                Text("设置私密问题", style = MaterialTheme. typography.headlineSmall)
+                Text("设置私密问题", style = MaterialTheme.typography.headlineSmall)
                 Spacer(modifier = Modifier.height(16.dp))
 
                 // ✅ 恢复设置私密问题的UI
@@ -203,7 +219,18 @@ fun ProfileScreen(
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(value = securityAnswerForSQ, onValueChange = { securityAnswerForSQ = it }, label = { Text("新答案") }, modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = { authViewModel.updateSecurityQuestion(email = user.email, password = passwordForSQ, question = securityQuestion, answer = securityAnswerForSQ) }, modifier = Modifier.fillMaxWidth()) { Text("保存私密问题") }
+                Button(
+                    onClick = {
+                        authViewModel.updateSecurityQuestion(
+                            email = user.email,
+                            password = passwordForSQ,
+                            question = securityQuestion,
+                            answer = securityAnswerForSQ
+                        )
+                    },
+                    enabled = authState !is AuthViewModel.AuthState.Loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("保存私密问题") }
                 
                 Spacer(modifier = Modifier.height(32.dp))
 

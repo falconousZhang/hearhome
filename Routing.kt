@@ -11,19 +11,49 @@ import io.ktor.server.http.content.static
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import jakarta.mail.Message.RecipientType
+import jakarta.mail.Session
+import jakarta.mail.Transport
+import jakarta.mail.internet.InternetAddress
+import jakarta.mail.internet.MimeMessage
 import kotlinx.serialization.Serializable
+import java.io.File
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
 import java.sql.Statement
+import java.time.Duration
+import java.util.Properties
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
-import java.io.File
 import io.ktor.http.content.*
 
 // =============== 工具：本地 SHA-256（避免额外依赖） ===============
 private fun sha256(s: String): String {
     val md = java.security.MessageDigest.getInstance("SHA-256")
     return md.digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
+}
+private val EMAIL_REGEX =
+    Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z0-9.-]+$")
+
+private const val MAX_EMAIL_LENGTH = 254
+
+private fun validateEmail(emailRaw: String): String? {
+    val email = emailRaw.trim()
+    if (email.isBlank()) return "邮箱不能为空"
+    if (email.length > MAX_EMAIL_LENGTH) return "邮箱长度不能超过 $MAX_EMAIL_LENGTH 个字符"
+    if (!EMAIL_REGEX.matches(email)) return "邮箱格式不正确"
+    return null
+}
+
+private val ENGLISH_LETTER_REGEX = Regex("[A-Za-z]")
+private val CHINESE_CHAR_REGEX = Regex("[\\p{IsHan}]")
+
+private fun validatePasswordFormat(passwordRaw: String, fieldLabel: String = "密码"): String? {
+    val password = passwordRaw.trim()
+    if (!ENGLISH_LETTER_REGEX.containsMatchIn(password)) return "${fieldLabel}必须包含英文字母"
+    if (CHINESE_CHAR_REGEX.containsMatchIn(password)) return "${fieldLabel}不能包含中文字符"
+    return null
 }
 
 // ---------------------------------------------------------------------------------
@@ -210,6 +240,47 @@ data class SpaceMember(
     val joinedAt: Long = System.currentTimeMillis(),
     val status: String = "active" // "active", "pending", "left"
 )
+
+@Serializable
+data class SpacePetAttributes(
+    val mood: Int = 50,
+    val health: Int = 80,
+    val energy: Int = 60,
+    val hydration: Int = 60,
+    val intimacy: Int = 50
+)
+
+@Serializable
+data class SpacePet(
+    val id: Int = 0,
+    val spaceId: Int,
+    val name: String,
+    val type: String = "pet",
+    val attributes: SpacePetAttributes,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+@Serializable
+data class SpacePetRequest(
+    val name: String? = null,
+    val type: String? = null,
+    val attributes: SpacePetAttributes
+)
+
+private fun ResultSet.toSpacePet(): SpacePet = SpacePet(
+    id = getInt("id"),
+    spaceId = getInt("spaceId"),
+    name = getString("name"),
+    type = getString("type"),
+    attributes = SpacePetAttributes(
+        mood = getInt("mood"),
+        health = getInt("health"),
+        energy = getInt("energy"),
+        hydration = getInt("hydration"),
+        intimacy = getInt("intimacy")
+    ),
+    updatedAt = getLong("updatedAt")
+)
 @Serializable
 data class CreateSpaceRequest(
     val name: String,
@@ -224,16 +295,24 @@ data class GenericResponse(val success: Boolean, val message: String)
 
 // --- 为特定请求创建的DTO ---
 @Serializable
-data class LoginRequest(val email: String, val password: String)
+data class LoginRequest(val email: String, val password: String, val emailCode: String? = null)
 
 @Serializable
 data class ResetQuestionRequest(val email: String)
 
 @Serializable
-data class ResetPasswordRequest(val email: String, val answer: String, val newPassword: String)
+data class ResetPasswordRequest(
+    val email: String,
+    val answer: String? = null,
+    val newPassword: String,
+    val confirmPassword: String? = null,
+    val newEmail: String? = null,
+    val emailCode: String? = null,
+    val method: String? = null
+)
 
 @Serializable
-data class SecurityQuestionResponse(val question: String)
+data class SecurityQuestionResponse(val question: String, val status: String = STATUS_USE_SECURITY_QUESTION)
 
 @Serializable
 data class LikeRequest(val userId: Int)
@@ -243,8 +322,9 @@ data class LikeRequest(val userId: Int)
 data class UpdatePasswordRequest(
     val email: String,
     val oldPassword: String,
-    val securityAnswer: String,
-    val newPassword: String
+    val securityAnswer: String? = null,
+    val newPassword: String,
+    val emailCode: String? = null
 )
 
 @Serializable
@@ -252,14 +332,212 @@ data class UpdateSecurityQuestionRequest(
     val email: String,
     val password: String,
     val question: String,
-    val answer: String
+    val answer: String,
+    val emailCode: String? = null
 )
+
+// ---------------------------------------------------------------------------------
+// --- 1.1 安全状态码与邮箱验证码风控引擎 ---------------------------------------------
+// ---------------------------------------------------------------------------------
+
+private const val STATUS_NEED_EMAIL_VERIFICATION = "NEED_EMAIL_VERIFICATION"
+private const val STATUS_USE_SECURITY_QUESTION = "USE_SECURITY_QUESTION"
+private const val STATUS_INVALID_CODE = "INVALID_CODE"
+private const val STATUS_CODE_EXPIRED = "CODE_EXPIRED"
+private const val STATUS_CODE_REQUIRED = "CODE_REQUIRED"
+private const val STATUS_TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
+
+enum class VerificationOperation { LOGIN, CHANGE_PASSWORD, CHANGE_SECURITY_QUESTION, RESET_PASSWORD }
+
+private fun parseVerificationOperation(raw: String?): VerificationOperation? {
+    val key = raw?.trim()?.uppercase() ?: return null
+    return when (key) {
+        "LOGIN" -> VerificationOperation.LOGIN
+        "CHANGE_PASSWORD", "UPDATE_PASSWORD" -> VerificationOperation.CHANGE_PASSWORD
+        "CHANGE_SECURITY_QUESTION", "UPDATE_SECURITY_QUESTION" -> VerificationOperation.CHANGE_SECURITY_QUESTION
+        "RESET_PASSWORD" -> VerificationOperation.RESET_PASSWORD
+        else -> null
+    }
+}
+
+@Serializable
+data class EmailCodeRequest(val email: String, val operation: String)
+
+@Serializable
+data class VerificationHint(
+    val success: Boolean,
+    val status: String,
+    val message: String,
+    val operation: String,
+    val expiresInSeconds: Long? = null,
+    val cooldownSeconds: Long? = null,
+    val attemptsLeft: Int? = null
+)
+
+private data class EmailCodeEntry(
+    val code: String,
+    val operation: VerificationOperation,
+    var expiresAt: Long,
+    var attemptsLeft: Int,
+    var used: Boolean = false,
+    var lastSentAt: Long
+)
+
+private interface Mailer {
+    fun sendCode(to: String, code: String, operation: VerificationOperation)
+}
+
+private class SmtpMailer(
+    private val username: String,
+    private val appPassword: String,
+    private val host: String,
+    private val port: String,
+    private val logger: org.slf4j.Logger
+) : Mailer {
+    override fun sendCode(to: String, code: String, operation: VerificationOperation) {
+        val props = Properties().apply {
+            put("mail.smtp.auth", "true")
+            put("mail.smtp.starttls.enable", "true")
+            put("mail.smtp.host", host)
+            put("mail.smtp.port", port)
+        }
+
+        val session = Session.getInstance(props, object : jakarta.mail.Authenticator() {
+            override fun getPasswordAuthentication(): jakarta.mail.PasswordAuthentication {
+                return jakarta.mail.PasswordAuthentication(username, appPassword)
+            }
+        })
+
+        val message = MimeMessage(session).apply {
+            setFrom(InternetAddress(username))
+            setRecipients(RecipientType.TO, InternetAddress.parse(to))
+            subject = "LoveHome 安全验证码"
+            setText(
+                "操作: ${operation.name}\n验证码: $code\n10分钟内有效，请勿泄露。"
+            )
+        }
+
+        Transport.send(message)
+        logger.info("验证码已发送至 $to，操作：${operation.name}")
+    }
+}
+
+private class EmailVerificationManager(
+    private val mailer: Mailer,
+    private val logger: org.slf4j.Logger
+) {
+    private val codes = ConcurrentHashMap<String, EmailCodeEntry>()
+    private val codeTtl = Duration.ofMinutes(10).toMillis()
+    private val resendCooldown = Duration.ofSeconds(60).toMillis()
+    private val maxAttempts = 5
+
+    private fun key(email: String, op: VerificationOperation) = "${email.lowercase()}:${op.name}"
+
+    fun requestCode(email: String, op: VerificationOperation): VerificationHint {
+        val now = System.currentTimeMillis()
+        val k = key(email, op)
+        val entry = codes[k]
+        if (entry != null && !entry.used && entry.expiresAt > now && now - entry.lastSentAt < resendCooldown) {
+            val retryAfter = (resendCooldown - (now - entry.lastSentAt)) / 1000
+            return VerificationHint(false, STATUS_TOO_MANY_REQUESTS, "请稍后再请求验证码", op.name, cooldownSeconds = retryAfter)
+        }
+
+        val code = Random.nextInt(100000, 999999).toString()
+        val newEntry = EmailCodeEntry(code, op, now + codeTtl, maxAttempts, false, now)
+        codes[k] = newEntry
+
+        try {
+            mailer.sendCode(email, code, op)
+        } catch (ex: Exception) {
+            logger.error("发送邮件验证码失败：${ex.message}", ex)
+            return VerificationHint(false, STATUS_TOO_MANY_REQUESTS, "发送验证码失败，请稍后再试", op.name)
+        }
+
+        return VerificationHint(true, STATUS_NEED_EMAIL_VERIFICATION, "已发送验证码", op.name, expiresInSeconds = codeTtl / 1000, cooldownSeconds = resendCooldown / 1000)
+    }
+
+    fun verify(email: String, op: VerificationOperation, provided: String?): VerificationHint {
+        val now = System.currentTimeMillis()
+        val k = key(email, op)
+        val entry = codes[k] ?: return VerificationHint(false, STATUS_CODE_REQUIRED, "需要先获取验证码", op.name)
+
+        if (entry.used) return VerificationHint(false, STATUS_INVALID_CODE, "验证码已被使用", op.name, attemptsLeft = entry.attemptsLeft)
+        if (entry.expiresAt < now) {
+            codes.remove(k)
+            return VerificationHint(false, STATUS_CODE_EXPIRED, "验证码已过期", op.name)
+        }
+        if (entry.attemptsLeft <= 0) return VerificationHint(false, STATUS_INVALID_CODE, "尝试次数过多，请重新获取", op.name, attemptsLeft = 0)
+        if (provided.isNullOrBlank()) return VerificationHint(false, STATUS_CODE_REQUIRED, "请输入验证码", op.name, attemptsLeft = entry.attemptsLeft)
+
+        return if (provided.trim() == entry.code) {
+            entry.used = true
+            codes.remove(k)
+            VerificationHint(true, "OK", "验证通过", op.name)
+        } else {
+            entry.attemptsLeft -= 1
+            VerificationHint(false, STATUS_INVALID_CODE, "验证码错误", op.name, attemptsLeft = entry.attemptsLeft)
+        }
+    }
+}
+
+private data class RiskProfile(
+    var lastLoginAt: Long = System.currentTimeMillis(),
+    var lastLoginIp: String? = null
+)
+
+private class RiskEngine {
+    private val profiles = ConcurrentHashMap<String, RiskProfile>()
+    private val inactivityThreshold = Duration.ofDays(7).toMillis()
+
+    fun recordLogin(email: String, ip: String?) {
+        val profile = profiles.getOrPut(email.lowercase()) { RiskProfile() }
+        profile.lastLoginAt = System.currentTimeMillis()
+        profile.lastLoginIp = ip
+    }
+
+    fun needEmailVerification(email: String, ip: String?, op: VerificationOperation): Boolean {
+        val profile = profiles[email.lowercase()]
+        // 登录场景：首次无画像时不强制验证码，避免阻塞初次登录；其他操作保持谨慎
+        if (profile == null) return op != VerificationOperation.LOGIN
+        val longInactive = System.currentTimeMillis() - profile.lastLoginAt > inactivityThreshold
+        val ipChanged = !profile.lastLoginIp.isNullOrBlank() && ip != null && profile.lastLoginIp != ip
+        return longInactive || ipChanged
+    }
+}
 
 // ---------------------------------------------------------------------------------
 // --- 2. 主路由配置
 // ---------------------------------------------------------------------------------
 
 fun Application.configureRouting() {
+
+    val logger = this.log
+    val smtpUser = System.getenv("EMAIL_SMTP_USER") ?: "1326319051@qq.com"
+    val smtpAppPassword = System.getenv("EMAIL_SMTP_PASSWORD") ?: ""
+    val smtpHost = System.getenv("EMAIL_SMTP_HOST") ?: "smtp.qq.com"
+    val smtpPort = System.getenv("EMAIL_SMTP_PORT") ?: "587"
+    val isDev = (System.getenv("ENV") ?: "").equals("DEV", ignoreCase = true)
+
+    val mailer: Mailer = if (smtpAppPassword.isNotBlank()) {
+        SmtpMailer(smtpUser, smtpAppPassword, smtpHost, smtpPort, logger)
+    } else {
+        object : Mailer {
+            override fun sendCode(to: String, code: String, operation: VerificationOperation) {
+                logger.warn("未配置 SMTP 凭据，已跳过向 $to 发送 ${operation.name} 验证码")
+            }
+        }
+    }
+
+    val verificationManager = EmailVerificationManager(mailer, logger)
+    val riskEngine = RiskEngine()
+
+    fun statusForHint(hint: VerificationHint): HttpStatusCode = when (hint.status) {
+        "OK" -> HttpStatusCode.OK
+        STATUS_INVALID_CODE -> HttpStatusCode.BadRequest
+        STATUS_TOO_MANY_REQUESTS -> HttpStatusCode.TooManyRequests
+        STATUS_NEED_EMAIL_VERIFICATION, STATUS_CODE_REQUIRED, STATUS_CODE_EXPIRED -> HttpStatusCode.Forbidden
+        else -> HttpStatusCode.BadRequest
+    }
 
     // --- 数据库连接 ---
     val dbHost = "127.0.0.1"
@@ -274,22 +552,33 @@ fun Application.configureRouting() {
     try {
         Class.forName("com.mysql.cj.jdbc.Driver")
         connection = DriverManager.getConnection(jdbcUrl)
-        log.info(">>>>>> Database connection successful! <<<<<<")
+        log.info(">>>>>> 数据库连接成功！<<<<<<")
     } catch (e: Exception) {
-        log.error("!!!!!! Database connection failed! Error: ${e.message} !!!!!!")
+        log.error("!!!!!! 数据库连接失败！错误：${e.message} !!!!!!")
         e.printStackTrace()
+    }
+
+    // 确保连接可用；若被数据库空闲断开则自动重连
+    fun ensureConnection(): Connection {
+        synchronized(this) {
+            if (connection == null || connection!!.isClosed) {
+                connection = DriverManager.getConnection(jdbcUrl)
+                log.info(">>>>>> 数据库连接已重新建立。<<<<<<")
+            }
+            return connection!!
+        }
     }
 
     environment.monitor.subscribe(ApplicationStopping) {
         connection?.close()
-        log.info(">>>>>> Database connection gracefully closed. <<<<<<")
+        log.info(">>>>>> 数据库连接已正常关闭。<<<<<<")
     }
 
     // --- 数据库操作辅助函数 ---
     fun <T> executeQuery(sql: String, setup: java.sql.PreparedStatement.() -> Unit, mapper: (ResultSet) -> T): List<T> {
         val list = mutableListOf<T>()
-        if (connection == null || connection!!.isClosed) throw Exception("Database service is unavailable.")
-        connection!!.prepareStatement(sql).use { statement ->
+        val conn = ensureConnection()
+        conn.prepareStatement(sql).use { statement ->
             statement.setup()
             statement.executeQuery().use { rs -> while (rs.next()) { list.add(mapper(rs)) } }
         }
@@ -297,16 +586,16 @@ fun Application.configureRouting() {
     }
 
     fun executeUpdate(sql: String, setup: java.sql.PreparedStatement.() -> Unit): Int {
-        if (connection == null || connection!!.isClosed) throw Exception("Database service is unavailable.")
-        connection!!.prepareStatement(sql).use { statement ->
+        val conn = ensureConnection()
+        conn.prepareStatement(sql).use { statement ->
             statement.setup()
             return statement.executeUpdate()
         }
     }
 
     fun executeInsert(sql: String, setup: java.sql.PreparedStatement.() -> Unit): Int {
-        if (connection == null || connection!!.isClosed) throw Exception("Database service is unavailable.")
-        connection!!.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS).use { statement ->
+        val conn = ensureConnection()
+        conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS).use { statement ->
             statement.setup()
             statement.executeUpdate()
             statement.generatedKeys.use { if (it.next()) return it.getInt(1) }
@@ -316,7 +605,7 @@ fun Application.configureRouting() {
 
     // --- 路由定义 ---
     routing {
-        get("/") { call.respondText("Welcome to HearHome App Backend!") }
+        get("/") { call.respondText("欢迎使用 HearHome 应用后端！") }
 
         post("/upload/image") {
             try {
@@ -346,7 +635,7 @@ fun Application.configureRouting() {
                 }
 
                 if (imageUrl == null)
-                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "No file found"))
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "未找到文件"))
                 else
                     call.respond(mapOf("imageUrl" to imageUrl))
 
@@ -359,32 +648,140 @@ fun Application.configureRouting() {
         static("/uploads") {
             files("uploads")
         }
+
+        // 兼容前端调用的安全邮箱验证码接口（security/email-code/...）
+        route("/security/email-code") {
+            post("/request") {
+                val req = call.receive<EmailCodeRequest>()
+                val op = parseVerificationOperation(req.operation)
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "未知的操作类型"))
+
+                val hint = verificationManager.requestCode(req.email.trim(), op)
+                val status = if (hint.success) HttpStatusCode.OK else statusForHint(hint)
+                call.respond(status, hint)
+            }
+
+            post("/verify") {
+                val body = call.receive<Map<String, String>>()
+                val email = body["email"]?.trim().orEmpty()
+                val operation = body["purpose"]?.trim()
+                val code = body["code"]?.trim().orEmpty()
+
+                if (email.isBlank() || operation.isNullOrBlank() || code.isBlank()) {
+                    return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "邮箱、操作或验证码不能为空"))
+                }
+
+                val op = parseVerificationOperation(operation)
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "未知的操作类型"))
+
+                val hint = verificationManager.verify(email, op, code)
+                val status = statusForHint(hint)
+                call.respond(status, hint)
+            }
+        }
         // --- User & Auth Routes ---
         route("/users") {
+            post("/email-code/request") {
+                val req = call.receive<EmailCodeRequest>()
+                val op = parseVerificationOperation(req.operation)
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "未知的操作类型"))
+
+                val hint = verificationManager.requestCode(req.email.trim(), op)
+                val status = if (hint.success) HttpStatusCode.OK else HttpStatusCode.TooManyRequests
+                call.respond(status, hint)
+            }
+
             post("/register") {
                 val user = call.receive<User>()
+
+                // ① 先做邮箱格式 + 长度校验，防止脏数据入库
+                val emailError = validateEmail(user.email)
+                if (emailError != null) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        GenericResponse(false, emailError)
+                    )
+                }
+
+                val passwordError = validatePasswordFormat(user.password)
+                if (passwordError != null) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        GenericResponse(false, passwordError)
+                    )
+                }
+
+                val sanitizedPassword = user.password.trim()
+
                 try {
-                    val existing = executeQuery("SELECT uid FROM users WHERE email = ?", { setString(1, user.email) }) { it.getInt(1) }.firstOrNull()
+                    // ② 再做邮箱是否已注册检查（保留你原有 SQL）
+                    val existing = executeQuery(
+                        "SELECT uid FROM users WHERE email = ?",
+                        {
+                            setString(1, user.email.trim())
+                        }
+                    ) { rs ->
+                        rs.getInt("uid")
+                    }.firstOrNull()
+
                     if (existing != null) {
-                        return@post call.respond(HttpStatusCode.Conflict, GenericResponse(false, "This email is already registered."))
+                        // 建议这里一起改成中文提示
+                        return@post call.respond(
+                            HttpStatusCode.Conflict,
+                            GenericResponse(false, "该邮箱已注册")
+                        )
                     }
 
-                    // 若前端传的是明文答案，这里统一转哈希；若已是 64 位十六进制，则保持
-                    val answerHash = if (user.secAnswerHash.matches(Regex("^[0-9a-fA-F]{64}$"))) user.secAnswerHash else sha256(user.secAnswerHash)
+                    // ③ 保留你原来密保答案哈希逻辑
+                    val answerHash =
+                        if (user.secAnswerHash.matches(Regex("^[0-9a-fA-F]{64}$")))
+                            user.secAnswerHash
+                        else
+                            sha256(user.secAnswerHash)
 
-                    val newId = executeInsert("INSERT INTO users (email, password, nickname, gender, avatarColor, relationshipStatus, secQuestion, secAnswerHash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", {
-                        setString(1, user.email); setString(2, user.password); setString(3, user.nickname); setString(4, user.gender); setString(5, user.avatarColor); setString(6, "single"); setString(7, user.secQuestion); setString(8, answerHash)
-                    })
+                    // ④ 保留原来的插入 users 语句（这里示例，用你自己的 SQL 替换）
+                    val newId = executeInsert(
+                        """
+            INSERT INTO users (email, password, nickname, gender, avatarColor, relationshipStatus, secQuestion, secAnswerHash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+                        {
+                            setString(1, user.email.trim())
+                            setString(2, sanitizedPassword)          // 实际上你可能还有密码加密逻辑
+                            setString(3, user.nickname)
+                            setString(4, user.gender ?: "single")
+                            setString(5, user.avatarColor ?: "#FFB6C1")
+                            setString(6, user.relationshipStatus ?: "single")
+                            setString(7, user.secQuestion)
+                            setString(8, answerHash)
+                        }
+                    )
 
-                    if (newId != -1) call.respond(HttpStatusCode.Created, user.copy(uid = newId, password = ""))
-                    else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "Failed to create user."))
-                } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
+                    if (newId != -1) {
+                        // 返回时清空密码字段，避免明文泄露
+                        call.respond(
+                            HttpStatusCode.Created,
+                            user.copy(uid = newId, password = "")
+                        )
+                    } else {
+                        call.respond(
+                            HttpStatusCode.InternalServerError,
+                            GenericResponse(false, "创建用户失败")
+                        )
+                    }
+                } catch (e: Exception) {
+                    call.respond(
+                        HttpStatusCode.InternalServerError,
+                        GenericResponse(false, e.message ?: "注册失败")
+                    )
+                }
             }
+
 
             get("/profile/{id}") {
                 val userId = call.parameters["id"]?.toIntOrNull()
                 if (userId == null) {
-                    return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid user ID"))
+                    return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的用户ID"))
                 }
                 try {
                     val user = executeQuery(
@@ -403,7 +800,7 @@ fun Application.configureRouting() {
                         )
                     }.firstOrNull()
 
-                    if (user != null) call.respond(user) else call.respond(HttpStatusCode.NotFound, GenericResponse(false, "User not found"))
+                    if (user != null) call.respond(user) else call.respond(HttpStatusCode.NotFound, GenericResponse(false, "未找到用户"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
                 }
@@ -415,7 +812,22 @@ fun Application.configureRouting() {
                     val user = executeQuery("SELECT * FROM users WHERE email = ? AND password = ?", { setString(1, req.email); setString(2, req.password) }) { rs ->
                         User(rs.getInt("uid"), rs.getString("email"), "", rs.getString("secQuestion"), "", rs.getString("nickname"), rs.getString("gender"), rs.getString("avatarColor"), rs.getString("relationshipStatus"), rs.getInt("partnerId").takeIf { !rs.wasNull() })
                     }.firstOrNull()
-                    if (user != null) call.respond(user) else call.respond(HttpStatusCode.Unauthorized, GenericResponse(false, "Invalid email or password."))
+                    if (user == null) return@post call.respond(HttpStatusCode.Unauthorized, GenericResponse(false, "邮箱或密码不正确。"))
+
+                    val needEmailCheck = riskEngine.needEmailVerification(user.email, call.request.local.remoteHost, VerificationOperation.LOGIN)
+                    if (needEmailCheck) {
+                        val hint = if (req.emailCode.isNullOrBlank()) {
+                            verificationManager.requestCode(user.email, VerificationOperation.LOGIN)
+                        } else {
+                            verificationManager.verify(user.email, VerificationOperation.LOGIN, req.emailCode)
+                        }
+                        if (!hint.success || hint.status != "OK") {
+                            return@post call.respond(statusForHint(hint), hint)
+                        }
+                    }
+
+                    riskEngine.recordLogin(user.email, call.request.local.remoteHost)
+                    call.respond(user)
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
 
@@ -443,25 +855,110 @@ fun Application.configureRouting() {
             post("/reset-password") {
                 try {
                     val req = call.receive<ResetPasswordRequest>()
-                    val hashInDb = executeQuery(
-                        "SELECT secAnswerHash FROM users WHERE email = ?",
-                        { setString(1, req.email.trim()) }
-                    ) { rs -> rs.getString("secAnswerHash") }
-                        .firstOrNull()
-                        ?: return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "该邮箱未注册"))
+                    val email = req.email.trim()
+                    if (email.isBlank()) {
+                        return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "邮箱不能为空"))
+                    }
+                    if (!req.newPassword.isNullOrBlank() && !req.confirmPassword.isNullOrBlank() && req.confirmPassword != req.newPassword) {
+                        return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "两次输入的密码不一致"))
+                    }
 
-                    val ok = sha256(req.answer.trim()) == hashInDb || req.answer.trim() == hashInDb
-                    if (!ok) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "密保答案不正确"))
+                    val method = (req.method ?: "EMAIL").uppercase()
+                    if (method == "SECURITY_QUESTION") {
+                        val row = executeQuery(
+                            "SELECT secAnswerHash, secQuestion FROM users WHERE email = ?",
+                            { setString(1, email) }
+                        ) { rs -> rs.getString("secAnswerHash") to (rs.getString("secQuestion") ?: "") }
+                            .firstOrNull()
+                            ?: return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "该邮箱未注册"))
 
-                    val updated = executeUpdate(
-                        "UPDATE users SET password = ? WHERE email = ?",
-                        { setString(1, req.newPassword); setString(2, req.email.trim()) }
-                    )
-                    if (updated > 0) call.respond(HttpStatusCode.OK, GenericResponse(true, "密码已重置"))
-                    else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "密码重置失败"))
+                        val (hashInDb, question) = row
+                        if (hashInDb.isNullOrBlank() || question.isBlank()) {
+                            return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "账户未设置密保问题"))
+                        }
+
+                        if (req.answer.isNullOrBlank()) {
+                            return@post call.respond(HttpStatusCode.OK, SecurityQuestionResponse(question))
+                        }
+
+                        val ok = sha256(req.answer.trim()) == hashInDb || req.answer.trim() == hashInDb
+                        if (!ok) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "密保答案不正确"))
+
+                        val targetEmail = req.newEmail?.trim().takeUnless { it.isNullOrBlank() } ?: email
+                        if (targetEmail != email) {
+                            val exists = executeQuery(
+                                "SELECT 1 FROM users WHERE email = ? LIMIT 1",
+                                { setString(1, targetEmail) }
+                            ) { 1 }.isNotEmpty()
+                            if (exists) return@post call.respond(HttpStatusCode.Conflict, GenericResponse(false, "新邮箱已被占用"))
+                        }
+
+                        // 若仅需提前验证答案（新密码未提供），直接返回成功提示，避免用户到下一步才发现错误
+                        if (req.newPassword.isNullOrBlank()) {
+                            return@post call.respond(HttpStatusCode.OK, GenericResponse(true, "密保答案正确，可继续设置新密码"))
+                        }
+
+                        val sanitizedPassword = req.newPassword.trim()
+                        val newPasswordError = validatePasswordFormat(sanitizedPassword, "新密码")
+                        if (newPasswordError != null) {
+                            return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, newPasswordError))
+                        }
+                        val updated = executeUpdate(
+                            "UPDATE users SET password = ?, email = ? WHERE email = ?",
+                            {
+                                setString(1, sanitizedPassword)
+                                setString(2, targetEmail)
+                                setString(3, email)
+                            }
+                        )
+                        if (updated > 0) call.respond(HttpStatusCode.OK, GenericResponse(true, "密码已重置，请使用新邮箱/新密码登录"))
+                        else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "密码重置失败"))
+                    } else {
+                        val hint = if (req.emailCode.isNullOrBlank()) {
+                            verificationManager.requestCode(email, VerificationOperation.RESET_PASSWORD)
+                        } else {
+                            verificationManager.verify(email, VerificationOperation.RESET_PASSWORD, req.emailCode)
+                        }
+
+                        if (!hint.success || hint.status != "OK") {
+                            return@post call.respond(statusForHint(hint), hint)
+                        }
+
+                        val sanitizedPassword = req.newPassword.trim()
+                        val newPasswordError = validatePasswordFormat(sanitizedPassword, "新密码")
+                        if (newPasswordError != null) {
+                            return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, newPasswordError))
+                        }
+                        val updated = executeUpdate(
+                            "UPDATE users SET password = ? WHERE email = ?",
+                            { setString(1, sanitizedPassword); setString(2, email) }
+                        )
+                        if (updated > 0) call.respond(HttpStatusCode.OK, GenericResponse(true, "密码已重置"))
+                        else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "密码重置失败"))
+                    }
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "服务器错误"))
                 }
+            }
+
+            // 兼容前端找回密码获取验证码的旧路径
+            post("/reset-password/code") {
+                val body = call.receive<Map<String, String>>()
+                val email = body["email"]?.trim().orEmpty()
+                if (email.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "邮箱不能为空"))
+                val hint = verificationManager.requestCode(email, VerificationOperation.RESET_PASSWORD)
+                val status = if (hint.success) HttpStatusCode.OK else statusForHint(hint)
+                call.respond(status, hint)
+            }
+
+            // 额外兼容路径，避免 404（部分前端可能调用 send-code）
+            post("/reset-password/send-code") {
+                val body = call.receive<Map<String, String>>()
+                val email = body["email"]?.trim().orEmpty()
+                if (email.isBlank()) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "邮箱不能为空"))
+                val hint = verificationManager.requestCode(email, VerificationOperation.RESET_PASSWORD)
+                val status = if (hint.success) HttpStatusCode.OK else statusForHint(hint)
+                call.respond(status, hint)
             }
 
             // ===== 个人中心：修改密码 =====
@@ -473,16 +970,23 @@ fun Application.configureRouting() {
                         UpdatePasswordRequest(
                             email = p["email"] ?: "",
                             oldPassword = p["oldPassword"] ?: "",
-                            securityAnswer = p["securityAnswer"] ?: "",
-                            newPassword = p["newPassword"] ?: ""
+                            securityAnswer = p["securityAnswer"],
+                            newPassword = p["newPassword"] ?: "",
+                            emailCode = p["emailCode"]
                         )
                     }
                 }
 
                 try {
                     val email = req.email.trim()
-                    if (email.isBlank() || req.oldPassword.isBlank() || req.securityAnswer.isBlank() || req.newPassword.isBlank()) {
-                        return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "所有字段均不能为空"))
+                    if (email.isBlank() || req.oldPassword.isBlank() || req.newPassword.isBlank()) {
+                        return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "邮箱、旧密码、新密码不能为空"))
+                    }
+
+                    val sanitizedPassword = req.newPassword.trim()
+                    val newPasswordError = validatePasswordFormat(sanitizedPassword, "新密码")
+                    if (newPasswordError != null) {
+                        return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, newPasswordError))
                     }
 
                     val row = executeQuery(
@@ -490,17 +994,36 @@ fun Application.configureRouting() {
                         { setString(1, email) }
                     ) { rs -> rs.getString("password") to (rs.getString("secAnswerHash") ?: "") }
                         .firstOrNull()
-                        ?: return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "User not found"))
+                        ?: return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "未找到用户"))
 
                     val (dbPwd, dbAnsHash) = row
                     if (dbPwd != req.oldPassword) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "旧密码不正确"))
 
-                    val ansOk = (sha256(req.securityAnswer.trim()) == dbAnsHash) || (req.securityAnswer.trim() == dbAnsHash)
-                    if (!ansOk) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "安全问题回答错误"))
+                    // 安全问题不再作为必填；如提供则校验
+                    val answerProvided = !req.securityAnswer.isNullOrBlank()
+                    if (answerProvided && dbAnsHash.isNotBlank()) {
+                        val ansOk = (sha256(req.securityAnswer.trim()) == dbAnsHash) || (req.securityAnswer.trim() == dbAnsHash)
+                        if (!ansOk) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "安全问题回答错误"))
+                    }
+
+                    val op = VerificationOperation.CHANGE_PASSWORD
+                    val forceRisk = isDev && call.request.headers["X-Force-Risk"]?.lowercase() == "true"
+                    val needEmailCheck = forceRisk || riskEngine.needEmailVerification(email, call.request.local.remoteHost, op)
+                    if (needEmailCheck) {
+                        val hint = if (req.emailCode.isNullOrBlank()) {
+                            verificationManager.requestCode(email, op)
+                        } else {
+                            verificationManager.verify(email, op, req.emailCode)
+                        }
+
+                        if (!hint.success || hint.status != "OK") {
+                            return@post call.respond(statusForHint(hint), hint)
+                        }
+                    }
 
                     val updated = executeUpdate(
                         "UPDATE users SET password = ? WHERE email = ?",
-                        { setString(1, req.newPassword); setString(2, email) }
+                        { setString(1, sanitizedPassword); setString(2, email) }
                     )
                     if (updated > 0) call.respond(HttpStatusCode.OK, GenericResponse(true, "密码更新成功"))
                     else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "密码更新失败"))
@@ -519,7 +1042,8 @@ fun Application.configureRouting() {
                             email = p["email"] ?: "",
                             password = p["password"] ?: "",
                             question = p["question"] ?: "",
-                            answer = p["answer"] ?: ""
+                            answer = p["answer"] ?: "",
+                            emailCode = p["emailCode"]
                         )
                     }
                 }
@@ -535,9 +1059,23 @@ fun Application.configureRouting() {
                         { setString(1, email) }
                     ) { rs -> rs.getString("password") }
                         .firstOrNull()
-                        ?: return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "User not found"))
+                        ?: return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "未找到用户"))
 
                     if (dbPwd != req.password) return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "当前密码不正确"))
+
+                    val op = VerificationOperation.CHANGE_SECURITY_QUESTION
+                    val forceRisk = isDev && call.request.headers["X-Force-Risk"]?.lowercase() == "true"
+                    val needEmailCheck = forceRisk || riskEngine.needEmailVerification(email, call.request.local.remoteHost, op)
+                    if (needEmailCheck) {
+                        val hint = if (req.emailCode.isNullOrBlank()) {
+                            verificationManager.requestCode(email, op)
+                        } else {
+                            verificationManager.verify(email, op, req.emailCode)
+                        }
+                        if (!hint.success || hint.status != "OK") {
+                            return@post call.respond(statusForHint(hint), hint)
+                        }
+                    }
 
                     val updated = executeUpdate(
                         "UPDATE users SET secQuestion = ?, secAnswerHash = ? WHERE email = ?",
@@ -558,7 +1096,7 @@ fun Application.configureRouting() {
         // --- Space Routes ---
         route("/space") {
             get {
-                val userId = call.request.queryParameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Query parameter 'userId' is required."))
+                val userId = call.request.queryParameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "缺少 userId 查询参数"))
                 try {
                     // [MODIFIED] The SQL query now also fetches the user's role, status and member id for each space.
                     val sql = """
@@ -586,7 +1124,7 @@ fun Application.configureRouting() {
                         )
                     }
                     call.respond(spaces)
-                } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "Database error")) }
+                } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "数据库错误")) }
             }
 
             post {
@@ -796,7 +1334,7 @@ fun Application.configureRouting() {
             post("/members/approve/{memberId}") {
                 val memberId = call.parameters["memberId"]?.toIntOrNull()
                 if (memberId == null) {
-                    call.respond(HttpStatusCode.BadRequest, "Invalid member ID")
+                    call.respond(HttpStatusCode.BadRequest, "无效的成员ID")
                     return@post
                 }
 
@@ -811,20 +1349,20 @@ fun Application.configureRouting() {
                     log.info("UPDATE executed, rows affected: $rowsAffected")
 
                     if (rowsAffected > 0) {
-                        call.respond(HttpStatusCode.OK, GenericResponse(true, "Member approved successfully"))
+                        call.respond(HttpStatusCode.OK, GenericResponse(true, "成员审核通过"))
                     } else {
-                        call.respond(HttpStatusCode.NotFound, GenericResponse(false, "Member not found"))
+                        call.respond(HttpStatusCode.NotFound, GenericResponse(false, "未找到成员"))
                     }
                 } catch (e: Exception) {
                     log.error("approveMember exception: ${e.message}", e)
-                    call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "Failed to approve member: ${e.message}"))
+                    call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "成员审批失败：${e.message}"))
                 }
             }
 
             post("/members/reject/{memberId}") {
                 val memberId = call.parameters["memberId"]?.toIntOrNull()
                 if (memberId == null) {
-                    call.respond(HttpStatusCode.BadRequest, "Invalid member ID")
+                    call.respond(HttpStatusCode.BadRequest, "无效的成员ID")
                     return@post
                 }
 
@@ -839,17 +1377,17 @@ fun Application.configureRouting() {
                     log.info("DELETE executed, rows affected: $rowsAffected")
 
                     if (rowsAffected > 0) {
-                        call.respond(HttpStatusCode.OK, GenericResponse(true, "Member rejected successfully"))
+                        call.respond(HttpStatusCode.OK, GenericResponse(true, "成员已拒绝"))
                     } else {
-                        call.respond(HttpStatusCode.NotFound, GenericResponse(false, "Member not found"))
+                        call.respond(HttpStatusCode.NotFound, GenericResponse(false, "未找到成员"))
                     }
                 } catch (e: Exception) {
                     log.error("rejectMember exception: ${e.message}", e)
-                    call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "Failed to reject member: ${e.message}"))
+                    call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "成员拒绝失败：${e.message}"))
                 }
             }
             delete("/members/{memberId}") {
-                val memberId = call.parameters["memberId"]?.toIntOrNull() ?: return@delete call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid member ID"))
+                val memberId = call.parameters["memberId"]?.toIntOrNull() ?: return@delete call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的成员ID"))
                 try {
                     // 删除成员记录
                     val deletedRows = executeUpdate("DELETE FROM space_members WHERE id = ?", { setInt(1, memberId) })
@@ -864,9 +1402,9 @@ fun Application.configureRouting() {
             }
 
             post("/leave/{spaceId}") {
-                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid space ID"))
+                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
                 val req = call.receive<Map<String, Int>>()
-                val userId = req["userId"] ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Missing userId"))
+                val userId = req["userId"] ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "缺少 userId"))
 
                 try {
                     // 删除用户的成员记录
@@ -887,9 +1425,9 @@ fun Application.configureRouting() {
             // --- 打卡间隔设置 ---
             // 更新空间的打卡间隔时间
             put("/{spaceId}/checkin-interval") {
-                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid space ID"))
+                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
                 val req = call.receive<Map<String, Long>>()
-                val checkInIntervalSeconds = req["checkInIntervalSeconds"] ?: return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Missing checkInIntervalSeconds"))
+                val checkInIntervalSeconds = req["checkInIntervalSeconds"] ?: return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "缺少 checkInIntervalSeconds"))
 
                 try {
                     val updatedRows = executeUpdate(
@@ -908,7 +1446,7 @@ fun Application.configureRouting() {
 
             // 获取空间的打卡间隔时间
             get("/{spaceId}/checkin-interval") {
-                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid space ID"))
+                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
 
                 try {
                     val interval = executeQuery(
@@ -925,12 +1463,109 @@ fun Application.configureRouting() {
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "查询失败"))
                 }
             }
+
+            route("/{spaceId}/pet") {
+                get {
+                    val spaceId = call.parameters["spaceId"]?.toIntOrNull()
+                        ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
+                    try {
+                        val pet = executeQuery(
+                            "SELECT * FROM space_pets WHERE spaceId = ?",
+                            { setInt(1, spaceId) }
+                        ) { it.toSpacePet() }.firstOrNull()
+
+                        if (pet != null) {
+                            call.respond(pet)
+                        } else {
+                            call.respond(HttpStatusCode.NotFound, GenericResponse(false, "该空间暂无宠物数据"))
+                        }
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "查询宠物信息失败"))
+                    }
+                }
+
+                post {
+                    val spaceId = call.parameters["spaceId"]?.toIntOrNull()
+                        ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
+                    val request = call.receive<SpacePetRequest>()
+                    try {
+                        val existsSpace = executeQuery(
+                            "SELECT 1 FROM spaces WHERE id = ? AND status = 'active'",
+                            { setInt(1, spaceId) }
+                        ) { it.getInt(1) }.isNotEmpty()
+                        if (!existsSpace) {
+                            return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "空间不存在"))
+                        }
+
+                        val now = System.currentTimeMillis()
+                        val resolvedName = request.name?.takeIf { it.isNotBlank() } ?: "萌宠"
+                        val resolvedType = request.type?.takeIf { it.isNotBlank() } ?: "pet"
+                        val attributes = request.attributes
+
+                        val existingPet = executeQuery(
+                            "SELECT * FROM space_pets WHERE spaceId = ?",
+                            { setInt(1, spaceId) }
+                        ) { it.toSpacePet() }.firstOrNull()
+
+                        if (existingPet == null) {
+                            val newId = executeInsert(
+                                "INSERT INTO space_pets (spaceId, name, type, mood, health, energy, hydration, intimacy, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                {
+                                    setInt(1, spaceId);
+                                    setString(2, resolvedName);
+                                    setString(3, resolvedType);
+                                    setInt(4, attributes.mood);
+                                    setInt(5, attributes.health);
+                                    setInt(6, attributes.energy);
+                                    setInt(7, attributes.hydration);
+                                    setInt(8, attributes.intimacy);
+                                    setLong(9, now)
+                                }
+                            )
+
+                            val created = SpacePet(
+                                id = newId,
+                                spaceId = spaceId,
+                                name = resolvedName,
+                                type = resolvedType,
+                                attributes = attributes,
+                                updatedAt = now
+                            )
+                            call.respond(HttpStatusCode.Created, created)
+                        } else {
+                            executeUpdate(
+                                "UPDATE space_pets SET name = ?, type = ?, mood = ?, health = ?, energy = ?, hydration = ?, intimacy = ?, updatedAt = ? WHERE id = ?",
+                                {
+                                    setString(1, resolvedName);
+                                    setString(2, resolvedType);
+                                    setInt(3, attributes.mood);
+                                    setInt(4, attributes.health);
+                                    setInt(5, attributes.energy);
+                                    setInt(6, attributes.hydration);
+                                    setInt(7, attributes.intimacy);
+                                    setLong(8, now);
+                                    setInt(9, existingPet.id)
+                                }
+                            )
+                            val updated = existingPet.copy(
+                                name = resolvedName,
+                                type = resolvedType,
+                                attributes = attributes,
+                                updatedAt = now
+                            )
+                            call.respond(HttpStatusCode.OK, updated)
+                        }
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "保存宠物信息失败"))
+                    }
+                }
+            }
             // --- 解散空间 --------------------------------------------------------------------------------------------wdz
             delete("/{spaceId}") {
                 val spaceId = call.parameters["spaceId"]?.toIntOrNull()
                     ?: return@delete call.respond(
                         HttpStatusCode.BadRequest,
-                        GenericResponse(false, "Invalid space ID")
+                        GenericResponse(false, "无效的空间ID")
                     )
 
                 // 目前没有登录态，只能靠前端把当前用户 ID 传过来
@@ -938,7 +1573,7 @@ fun Application.configureRouting() {
                 val requesterId = body["userId"]
                     ?: return@delete call.respond(
                         HttpStatusCode.BadRequest,
-                        GenericResponse(false, "Missing userId")
+                        GenericResponse(false, "缺少 userId")
                     )
 
                 try {
@@ -1018,19 +1653,19 @@ fun Application.configureRouting() {
                 val spaceId = call.parameters["spaceId"]?.toIntOrNull()
                     ?: return@post call.respond(
                         HttpStatusCode.BadRequest,
-                        GenericResponse(false, "Invalid space ID")
+                        GenericResponse(false, "无效的空间ID")
                     )
 
                 val body = call.receive<Map<String, Int>>()
                 val inviterId = body["inviterId"]
                     ?: return@post call.respond(
                         HttpStatusCode.BadRequest,
-                        GenericResponse(false, "Missing inviterId")
+                        GenericResponse(false, "缺少 inviterId")
                     )
                 val friendId = body["friendId"]
                     ?: return@post call.respond(
                         HttpStatusCode.BadRequest,
-                        GenericResponse(false, "Missing friendId")
+                        GenericResponse(false, "缺少 friendId")
                     )
 
                 try {
@@ -1124,7 +1759,7 @@ fun Application.configureRouting() {
             // --- 结束--------------------------------------------------------------------------------------------wdz
             // 获取空间详情（包含打卡间隔）
             get("/{spaceId}") {
-                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid space ID"))
+                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
 
                 try {
                     val space = executeQuery(
@@ -1174,17 +1809,17 @@ fun Application.configureRouting() {
             }
             post("/request") {
                 val req = call.receive<Map<String, Int>>(); val senderId = req["senderId"]; val receiverId = req["receiverId"]; if (senderId == null || receiverId == null) return@post call.respond(HttpStatusCode.BadRequest)
-                try { executeInsert("INSERT INTO friends (senderId, receiverId, status, createdAt) VALUES (?, ?, 'pending', ?)", { setInt(1, senderId); setInt(2, receiverId); setLong(3, System.currentTimeMillis()) }); call.respond(HttpStatusCode.Created, GenericResponse(true, "Friend request sent."))
+                try { executeInsert("INSERT INTO friends (senderId, receiverId, status, createdAt) VALUES (?, ?, 'pending', ?)", { setInt(1, senderId); setInt(2, receiverId); setLong(3, System.currentTimeMillis()) }); call.respond(HttpStatusCode.Created, GenericResponse(true, "好友请求已发送。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
             post("/accept/{requestId}") {
                 val requestId = call.parameters["requestId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest)
-                try { executeUpdate("UPDATE friends SET status = 'accepted' WHERE id = ?", { setInt(1, requestId) }); call.respond(HttpStatusCode.OK, GenericResponse(true, "Friend request accepted."))
+                try { executeUpdate("UPDATE friends SET status = 'accepted' WHERE id = ?", { setInt(1, requestId) }); call.respond(HttpStatusCode.OK, GenericResponse(true, "好友请求已接受。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
             post("/reject/{requestId}") {
                 val requestId = call.parameters["requestId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest)
-                try { executeUpdate("UPDATE friends SET status = 'rejected' WHERE id = ?", { setInt(1, requestId) }); call.respond(HttpStatusCode.OK, GenericResponse(true, "Friend request rejected."))
+                try { executeUpdate("UPDATE friends SET status = 'rejected' WHERE id = ?", { setInt(1, requestId) }); call.respond(HttpStatusCode.OK, GenericResponse(true, "好友请求已拒绝。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
 
@@ -1193,9 +1828,9 @@ fun Application.configureRouting() {
                 try {
                     val deletedRows = executeUpdate("DELETE FROM friends WHERE id = ?", { setInt(1, id) })
                     if (deletedRows > 0) {
-                        call.respond(HttpStatusCode.OK, GenericResponse(true, "Friend deleted."))
+                        call.respond(HttpStatusCode.OK, GenericResponse(true, "好友已删除。"))
                     } else {
-                        call.respond(HttpStatusCode.NotFound, GenericResponse(false, "Friend relation not found."))
+                        call.respond(HttpStatusCode.NotFound, GenericResponse(false, "未找到好友关系。"))
                     }
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
@@ -1219,7 +1854,7 @@ fun Application.configureRouting() {
             }
             post("/request") {
                 val req = call.receive<Map<String, Int>>(); val requesterId = req["requesterId"]; val partnerId = req["partnerId"]; if (requesterId == null || partnerId == null) return@post call.respond(HttpStatusCode.BadRequest)
-                try { executeInsert("INSERT INTO couples (requesterId, partnerId, status, createdAt) VALUES (?, ?, 'pending', ?)", { setInt(1, requesterId); setInt(2, partnerId); setLong(3, System.currentTimeMillis()) }); call.respond(HttpStatusCode.Created, GenericResponse(true, "Couple request sent."))
+                try { executeInsert("INSERT INTO couples (requesterId, partnerId, status, createdAt) VALUES (?, ?, 'pending', ?)", { setInt(1, requesterId); setInt(2, partnerId); setLong(3, System.currentTimeMillis()) }); call.respond(HttpStatusCode.Created, GenericResponse(true, "情侣请求已发送。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
             post("/accept/{requestId}") {
@@ -1297,10 +1932,10 @@ fun Application.configureRouting() {
                     }
 
                     connection?.commit()
-                    call.respond(HttpStatusCode.OK, GenericResponse(true, "Couple request accepted."))
+                    call.respond(HttpStatusCode.OK, GenericResponse(true, "情侣请求已接受。"))
                 } catch (e: Exception) {
                     connection?.rollback()
-                    log.error("Failed to accept couple request: ${e.message}")
+                    log.error("接受情侣请求失败：${e.message}")
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
                 } finally {
                     connection?.autoCommit = true
@@ -1308,7 +1943,7 @@ fun Application.configureRouting() {
             }
             post("/reject/{requestId}") {
                 val requestId = call.parameters["requestId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest)
-                try { executeUpdate("UPDATE couples SET status = 'rejected' WHERE id = ?", { setInt(1, requestId) }); call.respond(HttpStatusCode.OK, GenericResponse(true, "Couple request rejected."))
+                try { executeUpdate("UPDATE couples SET status = 'rejected' WHERE id = ?", { setInt(1, requestId) }); call.respond(HttpStatusCode.OK, GenericResponse(true, "情侣请求已拒绝。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
             delete("/{userId}") {
@@ -1322,8 +1957,8 @@ fun Application.configureRouting() {
                         executeUpdate("UPDATE users SET relationshipStatus = 'single', partnerId = NULL WHERE uid = ?", { setInt(1, couple.second) })
                         executeUpdate("UPDATE users SET relationshipStatus = 'single', partnerId = NULL WHERE uid = ?", { setInt(1, couple.third) })
                         connection?.commit()
-                        call.respond(HttpStatusCode.OK, GenericResponse(true, "Relationship ended."))
-                    } else { connection?.rollback(); call.respond(HttpStatusCode.NotFound, GenericResponse(false, "No active relationship found.")) }
+                        call.respond(HttpStatusCode.OK, GenericResponse(true, "关系已解除。"))
+                    } else { connection?.rollback(); call.respond(HttpStatusCode.NotFound, GenericResponse(false, "未找到有效的关系。")) }
                 } catch (e: Exception) { connection?.rollback(); call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
                 } finally { connection?.autoCommit = true }
             }
@@ -1381,7 +2016,7 @@ fun Application.configureRouting() {
                             )
                         )
                     } else {
-                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "Failed to create post."))
+                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "发布动态失败。"))
                     }
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
@@ -1402,7 +2037,7 @@ fun Application.configureRouting() {
                         executeUpdate("UPDATE space_posts SET likeCount = likeCount + 1 WHERE id = ?", { setInt(1, postId) })
                     }
                     connection?.commit()
-                    call.respond(HttpStatusCode.OK, GenericResponse(true, "Like status toggled."))
+                    call.respond(HttpStatusCode.OK, GenericResponse(true, "点赞状态已更新。"))
                 } catch (e: Exception) {
                     connection?.rollback()
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
@@ -1430,7 +2065,7 @@ fun Application.configureRouting() {
                     connection?.commit()
 
                     if (newId != -1) call.respond(HttpStatusCode.Created, comment.copy(id = newId))
-                    else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "Failed to create comment."))
+                    else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "发布评论失败。"))
                 } catch (e: Exception) {
                     connection?.rollback()
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
@@ -1491,7 +2126,7 @@ fun Application.configureRouting() {
 
             // 获取用户收到的所有提醒
             get("/user/{userId}") {
-                val userId = call.parameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid user ID"))
+                val userId = call.parameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的用户ID"))
                 try {
                     val mentions = executeQuery(
                         "SELECT * FROM post_mentions WHERE mentionedUserId = ? ORDER BY createdAt DESC",
@@ -1515,7 +2150,7 @@ fun Application.configureRouting() {
 
             // 获取用户的待处理提醒
             get("/user/{userId}/pending") {
-                val userId = call.parameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid user ID"))
+                val userId = call.parameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的用户ID"))
                 try {
                     val mentions = executeQuery(
                         "SELECT * FROM post_mentions WHERE mentionedUserId = ? AND status = 'pending' ORDER BY createdAt DESC",
@@ -1539,7 +2174,7 @@ fun Application.configureRouting() {
 
             // 获取动态的所有提醒
             get("/post/{postId}") {
-                val postId = call.parameters["postId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid post ID"))
+                val postId = call.parameters["postId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的动态ID"))
                 try {
                     val mentions = executeQuery(
                         "SELECT * FROM post_mentions WHERE postId = ? ORDER BY createdAt DESC",
@@ -1563,7 +2198,7 @@ fun Application.configureRouting() {
 
             // 标记为已读 (接受打卡)
             post("/{mentionId}/viewed") {
-                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid mention ID"))
+                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的提及ID"))
                 try {
                     val currentTime = System.currentTimeMillis()
                     val updatedRows = executeUpdate(
@@ -1580,7 +2215,7 @@ fun Application.configureRouting() {
 
             // 标记为忽略 (拒绝打卡)
             post("/{mentionId}/ignored") {
-                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid mention ID"))
+                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的提及ID"))
                 try {
                     val currentTime = System.currentTimeMillis()
                     val updatedRows = executeUpdate(
@@ -1597,7 +2232,7 @@ fun Application.configureRouting() {
 
             // 标记为超时
             post("/{mentionId}/expired") {
-                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid mention ID"))
+                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的提及ID"))
                 try {
                     val updatedRows = executeUpdate(
                         "UPDATE post_mentions SET status = 'expired' WHERE id = ? AND status = 'pending'",
@@ -1613,7 +2248,7 @@ fun Application.configureRouting() {
 
             // 更新超时时间 (作者修改)
             put("/{mentionId}/timeout") {
-                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid mention ID"))
+                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的提及ID"))
                 val request = call.receive<UpdateMentionTimeoutRequest>()
                 try {
                     val currentTime = System.currentTimeMillis()
@@ -1654,7 +2289,7 @@ fun Application.configureRouting() {
 
             // 删除提醒 (作者删除)
             delete("/{mentionId}") {
-                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@delete call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid mention ID"))
+                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@delete call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的提及ID"))
                 try {
                     val deletedRows = executeUpdate("DELETE FROM post_mentions WHERE id = ?", { setInt(1, mentionId) })
                     if (deletedRows > 0) {
@@ -1667,8 +2302,8 @@ fun Application.configureRouting() {
 
             // 获取用户在指定空间的未读提醒数量
             get("/user/{userId}/space/{spaceId}/count") {
-                val userId = call.parameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid user ID"))
-                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid space ID"))
+                val userId = call.parameters["userId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的用户ID"))
+                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
                 try {
                     val count = executeQuery(
                         """SELECT COUNT(*) as cnt FROM post_mentions pm 
@@ -1683,7 +2318,7 @@ fun Application.configureRouting() {
 
             // 更新最后通知时间
             post("/{mentionId}/notified") {
-                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid mention ID"))
+                val mentionId = call.parameters["mentionId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的提及ID"))
                 try {
                     val currentTime = System.currentTimeMillis()
                     val updatedRows = executeUpdate(
@@ -1723,14 +2358,14 @@ fun Application.configureRouting() {
                         )
                         call.respond(HttpStatusCode.Created, newAnniversary)
                     } else {
-                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "Failed to create anniversary."))
+                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "创建纪念日失败。"))
                     }
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
 
             // 获取指定空间的纪念日列表 (修改路径以匹配前端)
             get("/space/{spaceId}") {
-                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid space ID"))
+                val spaceId = call.parameters["spaceId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
                 try {
                     val anniversaries = executeQuery("SELECT * FROM anniversaries WHERE spaceId = ? ORDER BY dateMillis ASC", { setInt(1, spaceId) }) { rs ->
                         Anniversary(rs.getInt("id"), rs.getInt("spaceId"), rs.getString("name"), rs.getLong("dateMillis"), rs.getString("style"), rs.getInt("creatorUserId"), rs.getString("status"), rs.getLong("createdAt"))
@@ -1741,19 +2376,19 @@ fun Application.configureRouting() {
 
             // 确认纪念日 (修改路径以匹配前端)
             post("/{anniversaryId}/confirm") {
-                val anniversaryId = call.parameters["anniversaryId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid anniversary ID"))
+                val anniversaryId = call.parameters["anniversaryId"]?.toIntOrNull() ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的纪念日ID"))
                 try {
                     executeUpdate("UPDATE anniversaries SET status = 'active' WHERE id = ?", { setInt(1, anniversaryId) })
-                    call.respond(HttpStatusCode.OK, GenericResponse(true, "Anniversary confirmed."))
+                    call.respond(HttpStatusCode.OK, GenericResponse(true, "纪念日已确认。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
 
             // 删除纪念日
             delete("/{anniversaryId}") {
-                val anniversaryId = call.parameters["anniversaryId"]?.toIntOrNull() ?: return@delete call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid anniversary ID"))
+                val anniversaryId = call.parameters["anniversaryId"]?.toIntOrNull() ?: return@delete call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的纪念日ID"))
                 try {
                     executeUpdate("DELETE FROM anniversaries WHERE id = ?", { setInt(1, anniversaryId) })
-                    call.respond(HttpStatusCode.OK, GenericResponse(true, "Anniversary deleted."))
+                    call.respond(HttpStatusCode.OK, GenericResponse(true, "纪念日已删除。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
         }
@@ -1797,7 +2432,7 @@ fun Application.configureRouting() {
                         setBoolean(6, false)
                     })
                     if (newId != -1) call.respond(HttpStatusCode.Created, message.copy(id = newId))
-                    else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "Failed to send message."))
+                    else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "发送消息失败。"))
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
             }
         }

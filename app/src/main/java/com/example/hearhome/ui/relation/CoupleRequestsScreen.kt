@@ -34,6 +34,7 @@ fun CoupleRequestsScreen(
         factory = CoupleRequestsViewModelFactory(ApiService, currentUserId)
     )
     val uiState by viewModel.uiState.collectAsState()
+    var lastErrorMessage by remember { mutableStateOf<String?>(null) }
 
     // 采纳“上线测试”分支的方案，使用 LaunchedEffect 处理 Toast 提示，代码更简洁
     // 注意：您可能需要在 CoupleRequestsViewModel 和其 UiState 中添加 successMessage/error 状态，以及一个 clearMessages 方法
@@ -44,9 +45,12 @@ fun CoupleRequestsScreen(
         }
     }
 
-    uiState.error?.let {
-        LaunchedEffect(it) {
-            Toast.makeText(context, "错误: $it", Toast.LENGTH_SHORT).show()
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let { errorMessage ->
+            if (errorMessage != lastErrorMessage) {
+                Toast.makeText(context, "错误: $errorMessage", Toast.LENGTH_SHORT).show()
+                lastErrorMessage = errorMessage
+            }
             viewModel.clearMessages()
         }
     }
@@ -90,10 +94,11 @@ fun CoupleRequestsScreen(
                             CoupleRequestCard(
                                 requester = info.requester,
                                 onAccept = {
-                                    // 在此处调用 ViewModel 的方法
+                                    lastErrorMessage = null
                                     viewModel.acceptRequest(info.requestId)
                                 },
                                 onReject = {
+                                    lastErrorMessage = null
                                     viewModel.rejectRequest(info.requestId)
                                 }
                             )

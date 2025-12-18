@@ -33,7 +33,9 @@ data class FriendScreenState(
     val searchCompleted: Boolean = false,
     val friendRequests: List<FriendRequestWithSender> = emptyList(),
     val isLoading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val actionMessage: String? = null,
+    val actionError: String? = null
 )
 
 class FriendViewModel(private val apiService: ApiService) : ViewModel() {
@@ -50,7 +52,7 @@ class FriendViewModel(private val apiService: ApiService) : ViewModel() {
                     val user = response.body<User>()
                     _uiState.value = _uiState.value.copy(searchedUser = user, isLoading = false, searchCompleted = true)
                 } else {
-                    _uiState.value = _uiState.value.copy(isLoading = false, error = "User not found", searchCompleted = true)
+                    _uiState.value = _uiState.value.copy(isLoading = false, error = "未找到用户", searchCompleted = true)
                 }
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(isLoading = false, error = e.message, searchCompleted = true)
@@ -59,7 +61,13 @@ class FriendViewModel(private val apiService: ApiService) : ViewModel() {
     }
     
     fun clearSearch() {
-        _uiState.value = _uiState.value.copy(searchedUser = null, searchCompleted = false, error = null)
+        _uiState.value = _uiState.value.copy(
+            searchedUser = null,
+            searchCompleted = false,
+            error = null,
+            actionMessage = null,
+            actionError = null
+        )
     }
 
     fun getFriends(userId: Int) {
@@ -152,12 +160,35 @@ class FriendViewModel(private val apiService: ApiService) : ViewModel() {
     
     fun sendFriendRequest(senderId: Int, receiverId: Int) {
         viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(actionMessage = null, actionError = null, error = null)
             try {
-                apiService.sendFriendRequest(senderId, receiverId)
+                val response = apiService.sendFriendRequest(senderId, receiverId)
+                if (response.status == HttpStatusCode.Created || response.status == HttpStatusCode.OK) {
+                    _uiState.value = _uiState.value.copy(
+                        actionMessage = "好友请求已发送",
+                        actionError = null,
+                        error = null
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        actionMessage = null,
+                        actionError = "好友请求发送失败",
+                        error = "好友请求发送失败"
+                    )
+                }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                val message = e.message ?: "好友请求发送失败"
+                _uiState.value = _uiState.value.copy(
+                    actionMessage = null,
+                    actionError = message,
+                    error = message
+                )
             }
         }
+    }
+
+    fun clearMessages() {
+        _uiState.value = _uiState.value.copy(actionMessage = null, actionError = null, error = null)
     }
 
     fun deleteFriend(friendshipId: Int, currentUserId: Int) {
