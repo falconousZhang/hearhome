@@ -103,6 +103,7 @@ fun FriendRequestsScreen(
                     items(uiState.friendRequests, key = { it.request.id }) { requestWithSender ->
                         val sender = requestWithSender.sender
                         val request = requestWithSender.request
+                        val isProcessing = uiState.processingRequestIds.contains(request.id)
                         Card(Modifier.fillMaxWidth()) {
                             Row(
                                 modifier = Modifier.padding(16.dp),
@@ -120,13 +121,13 @@ fun FriendRequestsScreen(
                                         lastErrorMessage = null
                                         friendViewModel.acceptFriendRequest(request.id, currentUserId)
                                         Toast.makeText(context, "已接受好友请求", Toast.LENGTH_SHORT).show()
-                                    }) { Text("同意") }
+                                    }, enabled = !isProcessing) { Text(if (isProcessing) "处理中" else "同意") }
 
                                     OutlinedButton(onClick = {
                                         lastErrorMessage = null
                                         friendViewModel.rejectFriendRequest(request.id, currentUserId)
                                         Toast.makeText(context, "已拒绝好友请求", Toast.LENGTH_SHORT).show()
-                                    }) { Text("拒绝") }
+                                    }, enabled = !isProcessing) { Text(if (isProcessing) "处理中" else "拒绝") }
                                 }
                             }
                         }
