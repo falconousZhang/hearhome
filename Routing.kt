@@ -544,7 +544,8 @@ fun Application.configureRouting() {
     val dbPort = 3306
     val dbName = "perfect"
     val dbUser = "appuser"
-    val dbPassword = "Zcw205306" // 【重要】建议从配置文件读取
+    // 从环境变量读取dbPassword
+    val dbPassword = System.getenv("DB_PASSWORD") ?: throw IllegalStateException("请设置环境变量 DB_PASSWORD")
 
     val jdbcUrl = "jdbc:mysql://$dbHost:$dbPort/$dbName?user=$dbUser&password=$dbPassword&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
     var connection: Connection? = null
