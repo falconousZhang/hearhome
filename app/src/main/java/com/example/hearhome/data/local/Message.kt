@@ -13,6 +13,8 @@ data class Message(
     val receiverId: Int,
     val content: String? = null,
     val imageUrl: String? = null,
+    val audioUrl: String? = null,
+    val audioDuration: Long? = null,
     val timestamp: Long,
     val isRead: Boolean = false
 )
