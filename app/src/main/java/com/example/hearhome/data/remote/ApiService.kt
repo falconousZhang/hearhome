@@ -406,6 +406,14 @@ object ApiService {
         }
     }
 
+    /** 点赞/取消点赞（服务端内部切换） */
+    suspend fun toggleLike(postId: Int, userId: Int): HttpResponse {
+        return client.post("$BASE_URL/posts/like/$postId") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("userId" to userId))
+        }
+    }
+
     suspend fun connectPostUpdates(spaceId: Int): DefaultClientWebSocketSession {
         val wsUrl = buildWsUrl("ws/space/$spaceId/posts")
         return client.webSocketSession { url(wsUrl) }

@@ -352,7 +352,19 @@ class SpacePostViewModel(
      */
     suspend fun toggleLike(postId: Int): Boolean {
         return try {
+            val wasLiked = spacePostDao.hasLiked(postId, currentUserId) > 0
+
+            // 本地先行切换，保证 UI 秒回显
             spacePostDao.toggleLike(postId, currentUserId)
+
+            // 同步服务端（单接口内部切换）；失败仅记录日志，避免 UI 闪回
+            viewModelScope.launch {
+                runCatching {
+                    ApiService.toggleLike(postId, currentUserId)
+                }.onFailure {
+                    println("[toggleLike] sync failed: ${'$'}{it.message}")
+                }
+            }
 
             // 发送点赞通知
             context?.let { ctx ->
@@ -482,9 +494,10 @@ class SpacePostViewModel(
 
             // 写入帖子
             for (apiPost in remotePosts) {
-                // 若本地已有更高的评论数，保留最大值，避免服务端返回 0 覆盖本地增量
+                // 若本地已有更高的点赞/评论数，保留最大值，避免服务端返回 0 覆盖本地增量
                 val localExisting = spacePostDao.getPostById(apiPost.id)
                 val merged = apiPost.toLocal().copy(
+                    likeCount = maxOf(apiPost.likeCount, localExisting?.likeCount ?: 0),
                     commentCount = maxOf(apiPost.commentCount, localExisting?.commentCount ?: 0)
                 )
                 spacePostDao.insert(merged)
