@@ -52,6 +52,7 @@ fun ChatScreen(
     var messageText by remember { mutableStateOf("") }
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
+    var lastErrorMessage by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -76,7 +77,13 @@ fun ChatScreen(
     }
 
     LaunchedEffect(uiState.error) {
-        uiState.error?.let { Toast.makeText(context, "错误: $it", Toast.LENGTH_SHORT).show() }
+        uiState.error?.let { errorMessage ->
+            if (errorMessage != lastErrorMessage) {
+                Toast.makeText(context, "错误: $errorMessage", Toast.LENGTH_SHORT).show()
+                lastErrorMessage = errorMessage
+            }
+            viewModel.clearError()
+        }
     }
 
     Scaffold(
@@ -127,6 +134,7 @@ fun ChatScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Button(
                             onClick = {
+                                lastErrorMessage = null
                                 viewModel.sendMessage(currentUserId, friendUserId, messageText, selectedImageUri)
                                 messageText = ""
                                 selectedImageUri = null

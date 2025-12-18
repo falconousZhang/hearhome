@@ -30,8 +30,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,14 +55,21 @@ fun FriendRequestsScreen(
     val context = LocalContext.current
     val friendViewModel: FriendViewModel = viewModel(factory = FriendViewModelFactory(ApiService))
     val uiState by friendViewModel.uiState.collectAsState()
+    var lastErrorMessage by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(currentUserId) {
         friendViewModel.getFriendRequests(currentUserId)
     }
     
-    // 当发生错误时，显示提示
+    // 错误提示节流，避免按钮短时间内 Toast 频繁弹出
     LaunchedEffect(uiState.error) {
-        uiState.error?.let { Toast.makeText(context, "错误: $it", Toast.LENGTH_LONG).show() }
+        uiState.error?.let { errorMessage ->
+            if (errorMessage != lastErrorMessage) {
+                Toast.makeText(context, "错误: $errorMessage", Toast.LENGTH_LONG).show()
+                lastErrorMessage = errorMessage
+            }
+            friendViewModel.clearMessages()
+        }
     }
 
     Scaffold(
@@ -107,11 +117,13 @@ fun FriendRequestsScreen(
                                 Spacer(Modifier.width(16.dp))
                                 Column {
                                     Button(onClick = {
+                                        lastErrorMessage = null
                                         friendViewModel.acceptFriendRequest(request.id, currentUserId)
                                         Toast.makeText(context, "已接受好友请求", Toast.LENGTH_SHORT).show()
                                     }) { Text("同意") }
 
                                     OutlinedButton(onClick = {
+                                        lastErrorMessage = null
                                         friendViewModel.rejectFriendRequest(request.id, currentUserId)
                                         Toast.makeText(context, "已拒绝好友请求", Toast.LENGTH_SHORT).show()
                                     }) { Text("拒绝") }

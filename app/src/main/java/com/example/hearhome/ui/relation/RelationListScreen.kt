@@ -81,6 +81,8 @@ fun RelationListScreen(
     val uiState by friendViewModel.uiState.collectAsState()
     val coupleState by coupleViewModel.uiState.collectAsState()
     val friends = uiState.friends
+    val pendingFriendRequestCount = uiState.friendRequests.size
+    var lastErrorMessage by remember { mutableStateOf<String?>(null) }
     
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -94,6 +96,7 @@ fun RelationListScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 friendViewModel.getFriends(currentUserId)
+                friendViewModel.getFriendRequests(currentUserId)
                 coupleViewModel.getMyCouple(currentUserId)
                 coupleViewModel.getCoupleRequests(currentUserId)
             }
@@ -102,21 +105,31 @@ fun RelationListScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    // 错误提示节流，避免 Toast 被频繁触发
     LaunchedEffect(uiState.error) {
-        uiState.error?.let { Toast.makeText(context, "Error: $it", Toast.LENGTH_SHORT).show() }
-    }
-
-    // 监听情侣请求的成功/失败消息
-    LaunchedEffect(coupleState.successMessage) {
-        coupleState.successMessage?.let {
-            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
-            coupleViewModel.clearMessages()
+        uiState.error?.let { errorMessage ->
+            if (errorMessage != lastErrorMessage) {
+                Toast.makeText(context, "Error: $errorMessage", Toast.LENGTH_SHORT).show()
+                lastErrorMessage = errorMessage
+            }
+            friendViewModel.clearMessages()
         }
     }
 
+    // 监听情侣请求的成功/失败消息
+    // 情侣请求成功提示保持即时反馈
+    LaunchedEffect(coupleState.successMessage) {
+        coupleState.successMessage?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            coupleViewModel.clearMessages()
+        }
+    }
     LaunchedEffect(coupleState.error) {
-        coupleState.error?.let {
-            Toast.makeText(context, "错误: $it", Toast.LENGTH_SHORT).show()
+        coupleState.error?.let { errorMessage ->
+            if (errorMessage != lastErrorMessage) {
+                Toast.makeText(context, "错误: $errorMessage", Toast.LENGTH_SHORT).show()
+                lastErrorMessage = errorMessage
+            }
             coupleViewModel.clearMessages()
         }
     }
@@ -130,6 +143,7 @@ fun RelationListScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        lastErrorMessage = null
                         friendViewModel.deleteFriend(friendInfo.relation.id, currentUserId)
                         friendToDelete = null
                         Toast.makeText(context, "好友已删除", Toast.LENGTH_SHORT).show()
@@ -150,6 +164,7 @@ fun RelationListScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        lastErrorMessage = null
                         coupleViewModel.breakupCouple(currentUserId)
                         showBreakupDialog = false
                         Toast.makeText(context, "已解除情侣关系", Toast.LENGTH_SHORT).show()
@@ -172,6 +187,7 @@ fun RelationListScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        lastErrorMessage = null
                         coupleViewModel.sendCoupleRequest(currentUserId, friendInfo.user.uid)
                         friendToSendCoupleRequest = null
                     }
@@ -191,11 +207,13 @@ fun RelationListScreen(
                 actions = {
                     IconButton(onClick = { navController.navigate("friendRequests/${currentUserId}") }) {
                         BadgedBox(
-                            badge = { 
-                                // 好友请求徽章（暂时不显示数量）
+                            badge = {
+                                if (pendingFriendRequestCount > 0) {
+                                    Badge { Text(pendingFriendRequestCount.toString()) }
+                                }
                             }
                         ) {
-                            Icon(Icons.Default.PersonAdd, "好友申请")
+                            Icon(Icons.Default.PersonAdd, "��������")
                         }
                     }
                     IconButton(onClick = { navController.navigate("coupleRequests/${currentUserId}") }) {
