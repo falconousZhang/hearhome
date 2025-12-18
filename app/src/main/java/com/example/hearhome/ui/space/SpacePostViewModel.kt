@@ -8,6 +8,7 @@ import com.example.hearhome.data.local.*
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.data.remote.ApiSpacePost
 import com.example.hearhome.data.remote.SpacePostUpdate
+import com.example.hearhome.data.remote.CreatePostCommentRequest
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
@@ -24,6 +25,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import org.json.JSONArray
@@ -408,6 +410,8 @@ class SpacePostViewModel(
      */
     fun selectPost(postId: Int) {
         _selectedPostId.value = postId
+        // 切换帖子时同步最新评论
+        viewModelScope.launch { syncCommentsFromServer(postId) }
     }
 
     /**
@@ -421,21 +425,32 @@ class SpacePostViewModel(
     ): Boolean {
         return try {
             val audioAttachment = attachments.firstOrNull { it.type == AttachmentType.AUDIO }
-            val comment = PostComment(
-                postId = postId,
-                authorId = currentUserId,
-                content = content,
-                audioPath = audioAttachment?.uri,
-                audioDuration = audioAttachment?.duration,
-                replyToUserId = replyToUserId
-            )
-            val commentId = spacePostDao.addCommentWithCount(comment).toInt()
+            // 发送到服务器，服务端会返回含 id/timestamp 的评论
+            val serverComment = withContext(Dispatchers.IO) {
+                ApiService.createComment(
+                    CreatePostCommentRequest(
+                        postId = postId,
+                        authorId = currentUserId,
+                        content = content,
+                        replyToUserId = replyToUserId
+                    )
+                )
+            }
 
-            if (commentId > 0 && attachments.isNotEmpty()) {
+            // 本地落库（附带音频路径/时长信息）
+            val localComment = serverComment.copy(
+                audioPath = audioAttachment?.uri,
+                audioDuration = audioAttachment?.duration
+            )
+            spacePostDao.upsertComment(localComment)
+            spacePostDao.updateCommentCount(postId, 1)
+
+            // 附件绑定返回的 commentId
+            if (serverComment.id > 0 && attachments.isNotEmpty()) {
                 val entities = attachments.map {
                     MediaAttachment(
                         ownerType = AttachmentOwnerType.POST_COMMENT,
-                        ownerId = commentId,
+                        ownerId = serverComment.id,
                         type = it.type.name,
                         uri = it.uri,
                         duration = it.duration
@@ -443,6 +458,9 @@ class SpacePostViewModel(
                 }
                 mediaAttachmentDao.insertAttachments(entities)
             }
+
+            // 异步同步评论，确保与服务端一致
+            viewModelScope.launch { syncCommentsFromServer(postId) }
 
             // 发送评论通知
             context?.let { ctx ->
@@ -467,6 +485,27 @@ class SpacePostViewModel(
         } catch (e: Exception) {
             e.printStackTrace()
             false
+        }
+    }
+
+    private suspend fun syncCommentsFromServer(postId: Int) {
+        try {
+            val remote = withContext(Dispatchers.IO) { ApiService.getComments(postId) }
+
+            // 确保评论作者资料存在
+            val missingUserIds = remote.map { it.authorId }.distinct().filter { userDao.getUserById(it) == null }
+            missingUserIds.forEach { uid ->
+                runCatching {
+                    val resp = ApiService.getProfile(uid)
+                    if (resp.status.value in 200..299) {
+                        userDao.insert(resp.body())
+                    }
+                }
+            }
+
+            remote.forEach { spacePostDao.upsertComment(it) }
+        } catch (e: Exception) {
+            println("[syncCommentsFromServer] failed: ${'$'}{e.message}")
         }
     }
 

@@ -109,6 +109,12 @@ interface SpacePostDao {
     suspend fun createComment(comment: PostComment): Long
 
     /**
+     * 插入或更新评论（用于服务端下发的评论）
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertComment(comment: PostComment)
+
+    /**
      * 查询某动态的所有评论（流式）
      */
     @Query(

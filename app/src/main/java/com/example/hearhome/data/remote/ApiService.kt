@@ -21,6 +21,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import io.ktor.client.call.body
 import com.example.hearhome.data.local.Space
+import com.example.hearhome.data.local.PostComment
 
 // --- Data Transfer Objects (DTOs) for API Communication ---
 // DTOs like LoginRequest, GenericResponse, etc., are defined in other files within this package
@@ -152,6 +153,14 @@ data class ApiSpacePetRequest(
     val name: String? = null,
     val type: String? = null,
     val attributes: ApiPetAttributes
+)
+
+@Serializable
+data class CreatePostCommentRequest(
+    val postId: Int,
+    val authorId: Int,
+    val content: String,
+    val replyToUserId: Int? = null
 )
 
 
@@ -404,6 +413,19 @@ object ApiService {
             contentType(ContentType.Application.Json)
             setBody(post)
         }
+    }
+
+    /** 获取评论列表 */
+    suspend fun getComments(postId: Int): List<PostComment> {
+        return client.get("$BASE_URL/posts/comments/$postId").body()
+    }
+
+    /** 创建评论（服务器返回创建后的评论含 id/timestamp） */
+    suspend fun createComment(request: CreatePostCommentRequest): PostComment {
+        return client.post("$BASE_URL/posts/comment") {
+            contentType(ContentType.Application.Json)
+            setBody(request)
+        }.body()
     }
 
     /** 点赞/取消点赞（服务端内部切换） */
