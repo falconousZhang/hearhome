@@ -120,7 +120,7 @@ interface SpacePostDao {
     @Query(
         """
         SELECT * FROM post_comments
-        WHERE postId = :postId AND status = 'normal'
+        WHERE postId = :postId AND (status IS NULL OR status = 'normal')
         ORDER BY timestamp ASC
         """
     )
@@ -132,7 +132,7 @@ interface SpacePostDao {
     @Query(
         """
         SELECT * FROM post_comments
-        WHERE postId = :postId AND status = 'normal'
+        WHERE postId = :postId AND (status IS NULL OR status = 'normal')
         ORDER BY timestamp ASC
         """
     )

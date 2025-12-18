@@ -19,6 +19,7 @@ import io.ktor.serialization.kotlinx.json.*
 import io.ktor.websocket.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import io.ktor.client.call.body
 import com.example.hearhome.data.local.Space
 import com.example.hearhome.data.local.PostComment
@@ -172,7 +173,7 @@ data class CoupleRequest(val requesterId: Int, val partnerId: Int)
 object ApiService {
     private const val FORCE_RISK_HEADER = "X-Force-Risk"
     private const val FORCE_RISK_VALUE = "true"
-    private const val BASE_URL = "http://121.37.136.244:8080/"   //http://10.0.2.2:8080
+    private const val BASE_URL = "http://121.37.136.244:8080"   //http://10.0.2.2:8080
 
     private val json = Json {
         prettyPrint = true
@@ -417,7 +418,30 @@ object ApiService {
 
     /** 获取评论列表 */
     suspend fun getComments(postId: Int): List<PostComment> {
-        return client.get("$BASE_URL/posts/comments/$postId").body()
+        val url = "$BASE_URL/posts/comments/$postId"
+        println("[ApiService.getComments] requesting: $url")
+        val responseBody = client.get(url).bodyAsText()
+        println("[ApiService.getComments] raw response body: $responseBody")
+        
+        return runCatching {
+            Json.decodeFromString<List<PostComment>>(responseBody)
+        }.getOrElse { parseError ->
+            println("[ApiService.getComments] direct parse failed: ${parseError.message}")
+            // 尝试作为包装对象解析
+            try {
+                val json = Json.decodeFromString<JsonObject>(responseBody)
+                println("[ApiService.getComments] parsed as JsonObject")
+                val dataField = json["data"]
+                if (dataField != null) {
+                    println("[ApiService.getComments] found 'data' field, attempting to parse")
+                    return@getOrElse Json.decodeFromString<List<PostComment>>(dataField.toString())
+                }
+            } catch (e: Exception) {
+                println("[ApiService.getComments] parse attempt failed: ${e.message}")
+                e.printStackTrace()
+            }
+            emptyList()
+        }
     }
 
     /** 创建评论（服务器返回创建后的评论含 id/timestamp） */

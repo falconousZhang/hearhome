@@ -49,6 +49,9 @@ class SpacePostViewModel(
     private var realtimeJob: Job? = null
     private var refreshJob: Job? = null
 
+    // 远端为主的评论缓存
+    private val _remoteComments = MutableStateFlow<List<PostComment>>(emptyList())
+
     // 当前选中的 postId
     private val _selectedPostId = MutableStateFlow<Int?>(null)
 
@@ -111,41 +114,36 @@ class SpacePostViewModel(
             }
         }.stateIn(viewModelScope, SharingStarted.Lazily, null)
 
-    // 选中动态的评论列表
+    // 选中动态的评论列表（远端为主，附件从本地）
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val comments: StateFlow<List<CommentInfo>> = _selectedPostId.flatMapLatest { postId ->
-        if (postId == null) {
+    val comments: StateFlow<List<CommentInfo>> = _remoteComments.flatMapLatest { commentList ->
+        if (commentList.isEmpty()) {
             flowOf(emptyList())
         } else {
-            spacePostDao.getPostComments(postId).flatMapLatest { commentList ->
-                if (commentList.isEmpty()) {
-                    flowOf(emptyList())
-                } else {
-                    val commentIds = commentList.map { it.id }
-                    mediaAttachmentDao
-                        .observeAttachmentsForOwners(
-                            AttachmentOwnerType.POST_COMMENT,
-                            commentIds
+            val ids = commentList.map { it.id }
+            mediaAttachmentDao
+                .observeAttachmentsForOwners(AttachmentOwnerType.POST_COMMENT, ids)
+                .mapLatest { attachments ->
+                    val attachmentsMap = attachments.groupBy { it.ownerId }
+                    commentList.map { comment ->
+                        val author = userDao.getUserById(comment.authorId)
+                            ?: User(
+                                uid = comment.authorId,
+                                email = "",
+                                password = "",
+                                nickname = "用户${comment.authorId}",
+                                gender = "未知",
+                                avatarColor = "#78909C"
+                            )
+                        val replyToUser = comment.replyToUserId?.let { userDao.getUserById(it) }
+                        CommentInfo(
+                            comment = comment,
+                            author = author,
+                            replyToUser = replyToUser,
+                            attachments = attachmentsMap[comment.id].orEmpty()
                         )
-                        .mapLatest { attachments ->
-                            val attachmentsMap = attachments.groupBy { it.ownerId }
-                            commentList.mapNotNull { comment ->
-                                val author = userDao.getUserById(comment.authorId)
-                                val replyToUser = comment.replyToUserId?.let { userDao.getUserById(it) }
-                                if (author != null) {
-                                    CommentInfo(
-                                        comment = comment,
-                                        author = author,
-                                        replyToUser = replyToUser,
-                                        attachments = attachmentsMap[comment.id].orEmpty()
-                                    )
-                                } else {
-                                    null
-                                }
-                            }
-                        }
+                    }
                 }
-            }
         }
     }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
@@ -409,9 +407,14 @@ class SpacePostViewModel(
      * 选择某条动态查看详情
      */
     fun selectPost(postId: Int) {
+        println("[selectPost] called with postId=$postId")
         _selectedPostId.value = postId
-        // 切换帖子时同步最新评论
-        viewModelScope.launch { syncCommentsFromServer(postId) }
+        _remoteComments.value = emptyList()
+        // 切换帖子时同步最新评论（远端为主）
+        viewModelScope.launch { 
+            syncCommentsFromServer(postId)
+            println("[selectPost] after sync, _remoteComments.value.size = ${_remoteComments.value.size}")
+        }
     }
 
     /**
@@ -436,14 +439,33 @@ class SpacePostViewModel(
                     )
                 )
             }
+            println("[addComment] createComment returned: id=${serverComment.id}, postId=${serverComment.postId}, content=${serverComment.content}, status=${serverComment.status}")
+
+            // 确保作者资料存在（当前用户有可能尚未写入本地表）
+            if (userDao.getUserById(serverComment.authorId) == null) {
+                runCatching {
+                    val resp = ApiService.getProfile(serverComment.authorId)
+                    if (resp.status.value in 200..299) {
+                        userDao.insert(resp.body())
+                    }
+                }.onFailure {
+                    println("[addComment] fetch author failed: ${'$'}{it.message}")
+                }
+            }
 
             // 本地落库（附带音频路径/时长信息）
             val localComment = serverComment.copy(
+                status = serverComment.status.ifBlank { "normal" },
                 audioPath = audioAttachment?.uri,
                 audioDuration = audioAttachment?.duration
             )
             spacePostDao.upsertComment(localComment)
             spacePostDao.updateCommentCount(postId, 1)
+
+            // 先更新内存缓存，保证发送后立即可见
+            _remoteComments.value = (_remoteComments.value + localComment)
+                .distinctBy { it.id }
+                .sortedBy { it.timestamp }
 
             // 附件绑定返回的 commentId
             if (serverComment.id > 0 && attachments.isNotEmpty()) {
@@ -491,6 +513,17 @@ class SpacePostViewModel(
     private suspend fun syncCommentsFromServer(postId: Int) {
         try {
             val remote = withContext(Dispatchers.IO) { ApiService.getComments(postId) }
+            println("[syncCommentsFromServer] postId=$postId, got ${remote.size} remote comments")
+
+            // 如果服务端空列表，但本地已有评论（可能因后端查询过滤/延迟），优先回退到本地，避免 UI 被清空
+            if (remote.isEmpty()) {
+                val localFallback = spacePostDao.getPostCommentsOnce(postId)
+                if (localFallback.isNotEmpty()) {
+                    _remoteComments.value = localFallback.sortedBy { it.timestamp }
+                    println("[syncCommentsFromServer] remote empty, fallback to ${localFallback.size} local comments")
+                    return
+                }
+            }
 
             // 确保评论作者资料存在
             val missingUserIds = remote.map { it.authorId }.distinct().filter { userDao.getUserById(it) == null }
@@ -503,9 +536,20 @@ class SpacePostViewModel(
                 }
             }
 
-            remote.forEach { spacePostDao.upsertComment(it) }
+            // 写入服务端评论，补齐缺省状态
+            val normalized = remote.map { it.copy(status = it.status.ifBlank { "normal" }) }
+            normalized.forEach { spacePostDao.upsertComment(it) }
+            _remoteComments.value = normalized.sortedBy { it.timestamp }
+            println("[syncCommentsFromServer] set _remoteComments to ${_remoteComments.value.size} items")
         } catch (e: Exception) {
-            println("[syncCommentsFromServer] failed: ${'$'}{e.message}")
+            println("[syncCommentsFromServer] ERROR: ${e.message}")
+            e.printStackTrace()
+            // 出错时回退到本地已有评论，避免列表空白
+            val localFallback = spacePostDao.getPostCommentsOnce(postId)
+            if (localFallback.isNotEmpty()) {
+                _remoteComments.value = localFallback.sortedBy { it.timestamp }
+                println("[syncCommentsFromServer] fallback to ${localFallback.size} local comments")
+            }
         }
     }
 
@@ -533,8 +577,11 @@ class SpacePostViewModel(
 
             // 写入帖子
             for (apiPost in remotePosts) {
-                // 若本地已有更高的点赞/评论数，保留最大值，避免服务端返回 0 覆盖本地增量
+                // 本地已标记删除则跳过覆盖，防止删帖后被远端重新拉起
                 val localExisting = spacePostDao.getPostById(apiPost.id)
+                if (localExisting?.status == "deleted") continue
+
+                // 若本地已有更高的点赞/评论数，保留最大值，避免服务端返回 0 覆盖本地增量
                 val merged = apiPost.toLocal().copy(
                     likeCount = maxOf(apiPost.likeCount, localExisting?.likeCount ?: 0),
                     commentCount = maxOf(apiPost.commentCount, localExisting?.commentCount ?: 0)
