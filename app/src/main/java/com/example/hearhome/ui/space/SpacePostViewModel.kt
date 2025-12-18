@@ -482,7 +482,12 @@ class SpacePostViewModel(
 
             // 写入帖子
             for (apiPost in remotePosts) {
-                spacePostDao.insert(apiPost.toLocal())
+                // 若本地已有更高的评论数，保留最大值，避免服务端返回 0 覆盖本地增量
+                val localExisting = spacePostDao.getPostById(apiPost.id)
+                val merged = apiPost.toLocal().copy(
+                    commentCount = maxOf(apiPost.commentCount, localExisting?.commentCount ?: 0)
+                )
+                spacePostDao.insert(merged)
 
                 // 把服务端 images 字段转换成本地附件，保证换设备/重登仍能看到图片
                 val imageUrls = parseImages(apiPost.images)
