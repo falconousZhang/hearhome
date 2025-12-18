@@ -153,6 +153,10 @@ class AuthViewModel(
                 _authState.value = AuthState.Error("昵称、邮箱和密码不能为空")
                 return@launch
             }
+            if (secQuestion.isBlank() || secAnswer.isBlank()) {
+                _authState.value = AuthState.Error("请设置密保问题和答案，用于找回密码")
+                return@launch
+            }
             val emailError = validateEmailInput(email)
             if (emailError != null) {
                 _authState.value = AuthState.Error(emailError)
