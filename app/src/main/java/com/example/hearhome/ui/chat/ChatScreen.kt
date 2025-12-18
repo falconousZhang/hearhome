@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +33,7 @@ import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.example.hearhome.data.local.Message
 import com.example.hearhome.data.remote.ApiService
+import com.example.hearhome.ui.components.AudioRecorder
 import com.example.hearhome.ui.components.EmojiTextField
 import kotlinx.coroutines.launch
 
@@ -53,6 +55,7 @@ fun ChatScreen(
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var fullScreenImageUrl by remember { mutableStateOf<String?>(null) }
     var lastErrorMessage by remember { mutableStateOf<String?>(null) }
+    var showAudioRecorder by remember { mutableStateOf(false) }
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
@@ -122,26 +125,42 @@ fun ChatScreen(
                         IconButton(onClick = { photoPickerLauncher.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
                             Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Select Photo")
                         }
-                        EmojiTextField(
-                            modifier = Modifier.weight(1f),
-                            value = messageText,
-                            onValueChange = { messageText = it },
-                            label = "消息",
-                            placeholder = "输入消息...",
-                            maxLines = 4,
-                            minHeight = 50
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                lastErrorMessage = null
-                                viewModel.sendMessage(currentUserId, friendUserId, messageText, selectedImageUri)
-                                messageText = ""
-                                selectedImageUri = null
-                            },
-                            enabled = messageText.isNotBlank() || selectedImageUri != null
-                        ) {
-                            Text("发送")
+                        IconButton(onClick = { showAudioRecorder = !showAudioRecorder }) {
+                            Icon(Icons.Default.Mic, contentDescription = "Record Audio", tint = if (showAudioRecorder) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                        }
+                        
+                        if (showAudioRecorder) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                AudioRecorder(
+                                    onAudioRecorded = { path, duration ->
+                                        viewModel.sendMessage(currentUserId, friendUserId, null, null, path, duration)
+                                        showAudioRecorder = false
+                                    },
+                                    onDismiss = { showAudioRecorder = false }
+                                )
+                            }
+                        } else {
+                            EmojiTextField(
+                                modifier = Modifier.weight(1f),
+                                value = messageText,
+                                onValueChange = { messageText = it },
+                                label = "消息",
+                                placeholder = "输入消息...",
+                                maxLines = 4,
+                                minHeight = 50
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    lastErrorMessage = null
+                                    viewModel.sendMessage(currentUserId, friendUserId, messageText, selectedImageUri)
+                                    messageText = ""
+                                    selectedImageUri = null
+                                },
+                                enabled = messageText.isNotBlank() || selectedImageUri != null
+                            ) {
+                                Text("发送")
+                            }
                         }
                     }
                 }

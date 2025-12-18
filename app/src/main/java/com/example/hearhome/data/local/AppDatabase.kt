@@ -31,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Anniversary::class, // v12 新增
         PostMention::class  // v13 新增
     ],
-    version = 14,
+    version = 15,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -291,6 +291,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // 14 -> 15: Add audioUrl and audioDuration to messages
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN audioUrl TEXT")
+                db.execSQL("ALTER TABLE messages ADD COLUMN audioDuration INTEGER")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase =
             INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -311,7 +319,8 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_10_11,
                         MIGRATION_11_12,
                         MIGRATION_12_13,
-                        MIGRATION_13_14
+                        MIGRATION_13_14,
+                        MIGRATION_14_15
                     )
                     .fallbackToDestructiveMigration()
                     // 如需强制清库调试可打开：.fallbackToDestructiveMigration()

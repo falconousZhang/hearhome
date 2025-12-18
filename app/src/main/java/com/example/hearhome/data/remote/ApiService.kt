@@ -106,6 +106,8 @@ data class ApiMessage(
     val receiverId: Int,
     val content: String? = null,
     val imageUrl: String? = null,
+    val audioUrl: String? = null,
+    val audioDuration: Long? = null,
     val timestamp: Long = 0,
     val isRead: Boolean = false   // ← 必须添加
 )
@@ -194,6 +196,18 @@ object ApiService {
             formData = formData {
                 append("image", imageBytes, Headers.build {
                     append(HttpHeaders.ContentType, "image/jpeg")
+                    append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
+                })
+            }
+        )
+    }
+
+    suspend fun uploadAudio(audioBytes: ByteArray, fileName: String): HttpResponse {
+        return client.submitFormWithBinaryData(
+            url = "$BASE_URL/upload/audio",
+            formData = formData {
+                append("audio", audioBytes, Headers.build {
+                    append(HttpHeaders.ContentType, "audio/mp4")
                     append(HttpHeaders.ContentDisposition, "filename=\"$fileName\"")
                 })
             }

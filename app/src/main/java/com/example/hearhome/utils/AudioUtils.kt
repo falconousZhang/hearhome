@@ -111,8 +111,8 @@ object AudioUtils {
             // 释放之前的播放器
             stopAudio()
             
-            val file = File(filePath)
-            if (!file.exists()) {
+            val isUrl = filePath.startsWith("http")
+            if (!isUrl && !File(filePath).exists()) {
                 return false
             }
             
@@ -123,8 +123,13 @@ object AudioUtils {
                     release()
                     mediaPlayer = null
                 }
-                prepare()
-                start()
+                if (isUrl) {
+                    prepareAsync()
+                    setOnPreparedListener { start() }
+                } else {
+                    prepare()
+                    start()
+                }
             }
             
             true

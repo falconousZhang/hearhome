@@ -32,6 +32,10 @@ data class ChatScreenState(
 @Serializable
 data class ImageUploadResponse(val imageUrl: String)
 
+@SuppressLint("UnsafeOptInUsageError")
+@Serializable
+data class AudioUploadResponse(val audioUrl: String)
+
 class ChatViewModel(
     private val apiService: ApiService,
     application: Application
@@ -89,13 +93,14 @@ class ChatViewModel(
         }
     }
 
-    fun sendMessage(senderId: Int, receiverId: Int, content: String?, imageUri: Uri?) {
+    fun sendMessage(senderId: Int, receiverId: Int, content: String?, imageUri: Uri?, audioPath: String? = null, audioDuration: Long? = null) {
         viewModelScope.launch {
 
-            // ① 文本和图片都为空就不发
-            if (content.isNullOrBlank() && imageUri == null) return@launch
+            // ① 文本、图片、语音都为空就不发
+            if (content.isNullOrBlank() && imageUri == null && audioPath == null) return@launch
 
             var uploadedImageUrl: String? = null
+            var uploadedAudioUrl: String? = null
 
             // ② 如果有图片 URI，先上传图片
             if (imageUri != null) {
@@ -116,12 +121,29 @@ class ChatViewModel(
                 }
             }
 
+            // 如果有语音，上传语音
+            if (audioPath != null) {
+                try {
+                    val audioFile = java.io.File(audioPath)
+                    val audioBytes = audioFile.readBytes()
+                    val response = apiService.uploadAudio(audioBytes, audioFile.name)
+                    if (response.status == HttpStatusCode.OK) {
+                        val responseBody = response.body<AudioUploadResponse>()
+                        uploadedAudioUrl = responseBody.audioUrl
+                    }
+                } catch (e: Exception) {
+                    _uiState.value = _uiState.value.copy(error = "Audio upload failed: ${e.message}")
+                }
+            }
+
             // ③ 组织消息内容
             val apiMessage = ApiMessage(
                 senderId = senderId,
                 receiverId = receiverId,
-                content = if (uploadedImageUrl == null) content else null,  // 图片消息不发文字
+                content = if (uploadedImageUrl == null && uploadedAudioUrl == null) content else null,  // 图片/语音消息不发文字
                 imageUrl = uploadedImageUrl,
+                audioUrl = uploadedAudioUrl,
+                audioDuration = audioDuration,
                 timestamp = System.currentTimeMillis()
             )
 

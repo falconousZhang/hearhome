@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.hearhome.data.local.Message
+import com.example.hearhome.ui.components.AudioPlayer
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -63,6 +64,16 @@ fun ChatMessageItem(
                             .clip(RoundedCornerShape(12.dp))
                             .clickable { onImageClick(message.imageUrl!!) },
                         contentScale = ContentScale.Crop
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                // ✅ 显示语音消息
+                if (!message.audioUrl.isNullOrBlank() && message.audioDuration != null) {
+                    AudioPlayer(
+                        audioPath = message.audioUrl!!,
+                        duration = message.audioDuration,
+                        modifier = Modifier.width(160.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                 }
