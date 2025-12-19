@@ -153,8 +153,27 @@ fun SpaceDetailScreen(
     var showPostDialog by remember { mutableStateOf(false) }
     var showMembersDialog by remember { mutableStateOf(false) }
     var showMoreMenu by remember { mutableStateOf(false) }
+    
+    // 打卡成功提示
+    var showCheckInSuccess by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    
+    // 打卡状态刷新触发器
+    var checkInRefreshTrigger by remember { mutableStateOf(0L) }
+    
+    // 显示打卡成功提示
+    LaunchedEffect(showCheckInSuccess) {
+        if (showCheckInSuccess) {
+            snackbarHostState.showSnackbar(
+                message = "🎉 打卡成功！继续保持哦~",
+                duration = SnackbarDuration.Short
+            )
+            showCheckInSuccess = false
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text(currentSpace?.name ?: "空间") },
@@ -275,7 +294,8 @@ fun SpaceDetailScreen(
                     SpaceInfoCard(
                         space = space,
                         currentUserId = currentUserId,
-                        spaceDao = db.spaceDao()
+                        spaceDao = db.spaceDao(),
+                        refreshTrigger = checkInRefreshTrigger
                     )
                 }
             }
@@ -287,7 +307,8 @@ fun SpaceDetailScreen(
                         spaceId = spaceId,
                         currentUserId = currentUserId,
                         spacePostDao = db.spacePostDao(),
-                        userDao = db.userDao()
+                        userDao = db.userDao(),
+                        refreshTrigger = checkInRefreshTrigger
                     )
                 }
             }
@@ -334,6 +355,17 @@ fun SpaceDetailScreen(
             onDismiss = { showPostDialog = false },
             onPost = { content, pendingAttachments, mentionedUserIds, timeoutSeconds ->
                 scope.launch {
+                    // 检查发帖前是否需要打卡
+                    val neededCheckIn = currentSpace?.let { space ->
+                        if (space.checkInIntervalSeconds > 0) {
+                            withContext(Dispatchers.IO) {
+                                com.example.hearhome.utils.CheckInHelper.needsCheckIn(
+                                    space, currentUserId, db.spaceDao()
+                                )
+                            }
+                        } else false
+                    } ?: false
+                    
                     val resolvedAttachments = withContext(Dispatchers.IO) {
                         AttachmentFileHelper.resolvePendingAttachments(context, pendingAttachments)
                     }
@@ -351,6 +383,15 @@ fun SpaceDetailScreen(
                             }
                             db.postMentionDao().insertMentions(mentions)
                         }
+                        
+                        // 触发打卡状态刷新
+                        checkInRefreshTrigger = System.currentTimeMillis()
+                        
+                        // 如果之前需要打卡，现在发帖成功，显示打卡成功提示
+                        if (neededCheckIn && currentSpace?.checkInIntervalSeconds ?: 0 > 0) {
+                            showCheckInSuccess = true
+                        }
+                        
                         showPostDialog = false
                     }
                 }
@@ -554,16 +595,31 @@ private fun SpaceMembersDialog(
 fun SpaceInfoCard(
     space: Space,
     currentUserId: Int,
-    spaceDao: SpaceDao
+    spaceDao: SpaceDao,
+    refreshTrigger: Long = 0L  // 刷新触发器，当值改变时立即刷新
 ) {
     var checkInStatus by remember { mutableStateOf<String?>(null) }
     var remainingSeconds by remember { mutableStateOf(-1L) }
     var needsCheckIn by remember { mutableStateOf(false) }
 
-    // 每秒更新打卡状态
-    LaunchedEffect(space.id, space.checkInIntervalSeconds) {
+    // 每秒更新打卡状态，同时监听刷新触发器
+    LaunchedEffect(space.id, space.checkInIntervalSeconds, refreshTrigger) {
         if (space.checkInIntervalSeconds > 0) {
+            // 立即执行一次刷新
+            withContext(Dispatchers.IO) {
+                needsCheckIn = com.example.hearhome.utils.CheckInHelper.needsCheckIn(
+                    space, currentUserId, spaceDao
+                )
+                remainingSeconds = com.example.hearhome.utils.CheckInHelper.getRemainingTime(
+                    space, currentUserId, spaceDao
+                )
+                checkInStatus = com.example.hearhome.utils.CheckInHelper.getCheckInStatusText(
+                    space, currentUserId, spaceDao
+                )
+            }
+            // 然后每秒更新
             while (true) {
+                delay(1000)
                 withContext(Dispatchers.IO) {
                     needsCheckIn = com.example.hearhome.utils.CheckInHelper.needsCheckIn(
                         space, currentUserId, spaceDao
@@ -575,7 +631,6 @@ fun SpaceInfoCard(
                         space, currentUserId, spaceDao
                     )
                 }
-                delay(1000) // 每秒更新
             }
         }
     }
@@ -1382,7 +1437,8 @@ fun CheckInStatsCard(
     spaceId: Int,
     currentUserId: Int,
     spacePostDao: SpacePostDao,
-    userDao: UserDao
+    userDao: UserDao,
+    refreshTrigger: Long = 0L  // 刷新触发器
 ) {
     var myPostCount by remember { mutableStateOf(0) }
     var recentPosts by remember { mutableStateOf<List<SpacePost>>(emptyList()) }
@@ -1406,7 +1462,8 @@ fun CheckInStatsCard(
 
     var monthlyPostCount by remember { mutableStateOf(0) }
 
-    LaunchedEffect(spaceId) {
+    // 监听刷新触发器，当发帖后立即刷新统计数据
+    LaunchedEffect(spaceId, refreshTrigger) {
         withContext(Dispatchers.IO) {
             myPostCount = spacePostDao.getPostCountByUser(spaceId, currentUserId)
             recentPosts = spacePostDao.getRecentPostsByUser(spaceId, currentUserId, 5)
