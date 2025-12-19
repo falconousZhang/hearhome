@@ -2,11 +2,13 @@ package com.example.hearhome.data.local
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
 /**
  * 动态评论实体类
  * 记录用户对空间动态的评论
  */
+@Serializable
 @Entity(tableName = "post_comments")
 data class PostComment(
     @PrimaryKey(autoGenerate = true)

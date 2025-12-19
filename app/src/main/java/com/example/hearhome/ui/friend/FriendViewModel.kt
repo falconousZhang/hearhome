@@ -32,6 +32,7 @@ data class FriendScreenState(
     val searchedUser: User? = null,
     val searchCompleted: Boolean = false,
     val friendRequests: List<FriendRequestWithSender> = emptyList(),
+    val processingRequestIds: Set<Int> = emptySet(),
     val isLoading: Boolean = false,
     val error: String? = null,
     val actionMessage: String? = null,
@@ -80,7 +81,17 @@ class FriendViewModel(private val apiService: ApiService) : ViewModel() {
                 }
                 val relations = relationsResponse.body<List<Friend>>()
 
-                val friendDetails = relations.map { relation ->
+                // 去重：同一个好友仅保留一条关系，避免多次同意产生重复记录
+                val distinctRelations = mutableListOf<Friend>()
+                val seenOtherIds = mutableSetOf<Int>()
+                for (relation in relations) {
+                    val otherId = if (relation.senderId == userId) relation.receiverId else relation.senderId
+                    if (seenOtherIds.add(otherId)) {
+                        distinctRelations.add(relation)
+                    }
+                }
+
+                val friendDetails = distinctRelations.map { relation ->
                     val friendId = if (relation.senderId == userId) relation.receiverId else relation.senderId
                     async {
                         try {
@@ -112,6 +123,11 @@ class FriendViewModel(private val apiService: ApiService) : ViewModel() {
                 }
 
                 val basicRequests = requestsResponse.body<List<Friend>>()
+                    // 同一对用户的重复请求只保留最新一条，避免多次同意
+                    .sortedByDescending { it.createdAt }
+                    .distinctBy { req ->
+                        if (req.senderId == userId) req.receiverId else req.senderId
+                    }
                 
                 val detailedRequests = basicRequests.map { request ->
                     async {
@@ -134,26 +150,57 @@ class FriendViewModel(private val apiService: ApiService) : ViewModel() {
 
     fun acceptFriendRequest(requestId: Int, currentUserId: Int) {
         viewModelScope.launch {
+            if (_uiState.value.processingRequestIds.contains(requestId)) return@launch
+            _uiState.value = _uiState.value.copy(processingRequestIds = _uiState.value.processingRequestIds + requestId)
             try {
                 val response = apiService.acceptFriendRequest(requestId)
-                if(response.status == HttpStatusCode.OK) {
+                if (response.status == HttpStatusCode.OK) {
+                    // 乐观移除已处理请求，避免刷新前重复点击
+                    _uiState.value = _uiState.value.copy(
+                        friendRequests = _uiState.value.friendRequests.filterNot { it.request.id == requestId },
+                        processingRequestIds = _uiState.value.processingRequestIds - requestId,
+                        actionError = null
+                    )
                     getFriendRequests(currentUserId)
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        processingRequestIds = _uiState.value.processingRequestIds - requestId,
+                        actionError = "好友请求处理失败"
+                    )
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(
+                    error = e.message,
+                    processingRequestIds = _uiState.value.processingRequestIds - requestId
+                )
             }
         }
     }
 
     fun rejectFriendRequest(requestId: Int, currentUserId: Int) {
         viewModelScope.launch {
+            if (_uiState.value.processingRequestIds.contains(requestId)) return@launch
+            _uiState.value = _uiState.value.copy(processingRequestIds = _uiState.value.processingRequestIds + requestId)
             try {
                 val response = apiService.rejectFriendRequest(requestId)
-                if(response.status == HttpStatusCode.OK) {
+                if (response.status == HttpStatusCode.OK) {
+                    _uiState.value = _uiState.value.copy(
+                        friendRequests = _uiState.value.friendRequests.filterNot { it.request.id == requestId },
+                        processingRequestIds = _uiState.value.processingRequestIds - requestId,
+                        actionError = null
+                    )
                     getFriendRequests(currentUserId)
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        processingRequestIds = _uiState.value.processingRequestIds - requestId,
+                        actionError = "好友请求处理失败"
+                    )
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message)
+                _uiState.value = _uiState.value.copy(
+                    error = e.message,
+                    processingRequestIds = _uiState.value.processingRequestIds - requestId
+                )
             }
         }
     }

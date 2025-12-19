@@ -109,12 +109,18 @@ interface SpacePostDao {
     suspend fun createComment(comment: PostComment): Long
 
     /**
+     * 插入或更新评论（用于服务端下发的评论）
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertComment(comment: PostComment)
+
+    /**
      * 查询某动态的所有评论（流式）
      */
     @Query(
         """
         SELECT * FROM post_comments
-        WHERE postId = :postId AND status = 'normal'
+        WHERE postId = :postId AND (status IS NULL OR status = 'normal')
         ORDER BY timestamp ASC
         """
     )
@@ -126,7 +132,7 @@ interface SpacePostDao {
     @Query(
         """
         SELECT * FROM post_comments
-        WHERE postId = :postId AND status = 'normal'
+        WHERE postId = :postId AND (status IS NULL OR status = 'normal')
         ORDER BY timestamp ASC
         """
     )
