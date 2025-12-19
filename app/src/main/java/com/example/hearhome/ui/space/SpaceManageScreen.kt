@@ -315,10 +315,15 @@ fun SpaceManageScreen(
                 onDismiss = { showInviteDialog = false },
                 spaceId = spaceId,
                 currentUserId = currentUserId,
-                onInvite = { friendUserId ->
+                onInvite = { friendUserIds ->
                     scope.launch {
-                        viewModel.inviteFriendToSpace(spaceId, friendUserId)
-                        snackbarHostState.showSnackbar("已发送邀请/加入请求")
+                        viewModel.inviteFriendsToSpace(spaceId, friendUserIds)
+                        val message = if (friendUserIds.size == 1) {
+                            "已发送邀请/加入请求"
+                        } else {
+                            "已向 ${friendUserIds.size} 位好友发送邀请"
+                        }
+                        snackbarHostState.showSnackbar(message)
                         showInviteDialog = false
                     }
                 }
@@ -696,12 +701,12 @@ fun InviteFriendDialog(
     onDismiss: () -> Unit,
     spaceId: Int,
     currentUserId: Int,
-    onInvite: (Int) -> Unit
+    onInvite: (List<Int>) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var friendList by remember { mutableStateOf<List<User>>(emptyList()) }
-    var selectedFriendId by remember { mutableStateOf<Int?>(null) }
+    var selectedFriendIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -764,18 +769,56 @@ fun InviteFriendDialog(
 
                 else -> {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("请选择要邀请的好友：")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("请选择要邀请的好友：")
+                            // 全选/取消全选按钮
+                            TextButton(
+                                onClick = {
+                                    selectedFriendIds = if (selectedFriendIds.size == friendList.size) {
+                                        emptySet()
+                                    } else {
+                                        friendList.map { it.uid }.toSet()
+                                    }
+                                }
+                            ) {
+                                Text(
+                                    if (selectedFriendIds.size == friendList.size) "取消全选" else "全选",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        Text(
+                            "已选择 ${selectedFriendIds.size} 人",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                         friendList.forEach { user ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { selectedFriendId = user.uid }
+                                    .clickable {
+                                        selectedFriendIds = if (user.uid in selectedFriendIds) {
+                                            selectedFriendIds - user.uid
+                                        } else {
+                                            selectedFriendIds + user.uid
+                                        }
+                                    }
                                     .padding(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                RadioButton(
-                                    selected = selectedFriendId == user.uid,
-                                    onClick = { selectedFriendId = user.uid }
+                                Checkbox(
+                                    checked = user.uid in selectedFriendIds,
+                                    onCheckedChange = { checked ->
+                                        selectedFriendIds = if (checked) {
+                                            selectedFriendIds + user.uid
+                                        } else {
+                                            selectedFriendIds - user.uid
+                                        }
+                                    }
                                 )
                                 Spacer(Modifier.width(8.dp))
                                 Column {
@@ -795,11 +838,13 @@ fun InviteFriendDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    selectedFriendId?.let { onInvite(it) }
+                    if (selectedFriendIds.isNotEmpty()) {
+                        onInvite(selectedFriendIds.toList())
+                    }
                 },
-                enabled = !isLoading && selectedFriendId != null
+                enabled = !isLoading && selectedFriendIds.isNotEmpty()
             ) {
-                Text("邀请")
+                Text("邀请 (${selectedFriendIds.size})")
             }
         },
         dismissButton = {

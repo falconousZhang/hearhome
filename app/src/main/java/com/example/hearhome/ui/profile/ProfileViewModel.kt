@@ -25,6 +25,14 @@ class ProfileViewModel(private val userDao: UserDao) : ViewModel() {
     private val _uiState = MutableStateFlow(ProfileUiState())
     val uiState = _uiState.asStateFlow()
 
+    private val _updateResult = MutableStateFlow<UpdateResult?>(null)
+    val updateResult = _updateResult.asStateFlow()
+
+    sealed class UpdateResult {
+        data class Success(val message: String) : UpdateResult()
+        data class Error(val message: String) : UpdateResult()
+    }
+
     fun loadUser(userId: Int) {
         viewModelScope.launch {
             _uiState.value = ProfileUiState(isLoading = true)
@@ -40,6 +48,29 @@ class ProfileViewModel(private val userDao: UserDao) : ViewModel() {
                 _uiState.value = ProfileUiState(error = e.message, isLoading = false)
             }
         }
+    }
+
+    fun updateAvatarColor(userId: Int, newColor: String) {
+        viewModelScope.launch {
+            try {
+                val response = ApiService.updateAvatarColor(userId, newColor)
+                if (response.status == HttpStatusCode.OK) {
+                    // 更新本地状态
+                    _uiState.value = _uiState.value.copy(
+                        user = _uiState.value.user?.copy(avatarColor = newColor)
+                    )
+                    _updateResult.value = UpdateResult.Success("头像颜色已更新")
+                } else {
+                    _updateResult.value = UpdateResult.Error("更新头像颜色失败")
+                }
+            } catch (e: Exception) {
+                _updateResult.value = UpdateResult.Error("更新头像颜色失败: ${e.message}")
+            }
+        }
+    }
+
+    fun clearUpdateResult() {
+        _updateResult.value = null
     }
 }
 
