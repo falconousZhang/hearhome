@@ -324,6 +324,18 @@ object ApiService {
         return client.get("$BASE_URL/users/profile/$userId")
     }
 
+    /**
+     * 更新用户头像颜色
+     * @param userId 用户ID
+     * @param avatarColor 新的头像颜色（十六进制格式，如 #FF5722）
+     */
+    suspend fun updateAvatarColor(userId: Int, avatarColor: String): HttpResponse {
+        return client.put("$BASE_URL/users/avatar/$userId") {
+            contentType(ContentType.Application.Json)
+            setBody(mapOf("avatarColor" to avatarColor))
+        }
+    }
+
     suspend fun searchUserById(userId: Int): HttpResponse {
         return client.get("$BASE_URL/users/profile/$userId")
     }
