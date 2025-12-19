@@ -239,13 +239,23 @@ fun RelationListScreen(
             
             if (coupleState.myCouple != null) {
                 val partner = coupleState.myCouple!!.partner
-                Card(modifier = Modifier.fillMaxWidth()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            // 点击跳转到与情侣的聊天界面
+                            navController.navigate("chat/$currentUserId/${partner.uid}")
+                        }
+                ) {
                     Row(
                         modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Box(
                                 modifier = Modifier
                                     .size(50.dp)
@@ -262,6 +272,11 @@ fun RelationListScreen(
                                     text = "ID: ${partner.uid}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "点击开始聊天",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -297,11 +312,20 @@ fun RelationListScreen(
                     items(items = friends, key = { it.relation.id }) { friendInfo ->
                         var showMenu by remember { mutableStateOf(false) }
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    // 点击跳转到聊天界面
+                                    navController.navigate("chat/$currentUserId/${friendInfo.user.uid}")
+                                }
+                                .padding(vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
                                 Box(
                                     modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(friendInfo.user.avatarColor.toColorInt()))
                                 )
