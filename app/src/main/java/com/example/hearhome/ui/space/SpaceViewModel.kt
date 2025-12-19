@@ -11,6 +11,8 @@ import com.example.hearhome.data.remote.ApiSpaceMember
 import io.ktor.client.call.body
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -322,7 +324,7 @@ class SpaceViewModel(
                     }
 
                     HttpStatusCode.Conflict -> {
-                        // 一般是“已经在空间中 / 已被邀请”等
+                        // 一般是"已经在空间中 / 已被邀请"等
                         _error.value = responseBody.ifBlank { "该用户已在空间中或已被邀请" }
                         // 保险起见，同步一次，避免本地状态过旧
                         syncSpaceMembersFromServer(spaceId)
@@ -352,6 +354,60 @@ class SpaceViewModel(
         }
     }
 
+    /**
+     * 批量邀请好友加入空间
+     * @param spaceId 空间ID
+     * @param friendUserIds 要邀请的好友ID列表
+     */
+    fun inviteFriendsToSpace(spaceId: Int, friendUserIds: List<Int>) {
+        if (friendUserIds.isEmpty()) return
+        
+        viewModelScope.launch {
+            var successCount = 0
+            var failCount = 0
+            val failedUsers = mutableListOf<String>()
+            
+            // 并行发送邀请请求
+            val results = friendUserIds.map { friendUserId ->
+                async {
+                    try {
+                        val response = ApiService.inviteFriendToSpace(
+                            spaceId = spaceId,
+                            inviterId = currentUserId,
+                            friendId = friendUserId
+                        )
+                        Triple(friendUserId, response.status, response.bodyAsText())
+                    } catch (e: Exception) {
+                        Triple(friendUserId, null, e.message ?: "网络错误")
+                    }
+                }
+            }.awaitAll()
+            
+            // 统计结果
+            results.forEach { (userId, status, body) ->
+                when (status) {
+                    HttpStatusCode.OK, HttpStatusCode.Created -> successCount++
+                    HttpStatusCode.Conflict -> {
+                        // 已在空间中，算成功
+                        successCount++
+                    }
+                    else -> {
+                        failCount++
+                        failedUsers.add("用户$userId")
+                    }
+                }
+            }
+            
+            // 刷新成员列表
+            syncSpaceMembersFromServer(spaceId)
+            loadSpaceMembers(spaceId)
+            
+            // 显示结果提示
+            if (failCount > 0) {
+                _error.value = "成功邀请 $successCount 人，${failedUsers.joinToString(", ")} 邀请失败"
+            }
+        }
+    }
 
     /******************wdz******/
     fun approveMember(memberId: Int) {
