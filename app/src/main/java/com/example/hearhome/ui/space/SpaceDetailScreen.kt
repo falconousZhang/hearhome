@@ -18,7 +18,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.*
@@ -28,6 +27,8 @@ import com.example.hearhome.ui.components.EmojiTextField
 import com.example.hearhome.ui.components.attachments.AttachmentAudioList
 import com.example.hearhome.ui.components.attachments.AttachmentGallery
 import com.example.hearhome.ui.components.attachments.AttachmentSelector
+import com.example.hearhome.ui.components.StyledAvatar
+import androidx.core.graphics.toColorInt
 import com.example.hearhome.utils.AttachmentFileHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -558,11 +559,10 @@ private fun SpaceMembersDialog(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(memberInfo.user.avatarColor.toColorInt()))
+                                StyledAvatar(
+                                    avatarData = memberInfo.user.avatarColor,
+                                    size = 36.dp,
+                                    initial = memberInfo.user.nickname.firstOrNull()?.uppercase() ?: "U"
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Column {
@@ -635,10 +635,12 @@ fun SpaceInfoCard(
         }
     }
 
+    val coverColor = runCatching { Color(space.coverColor.toColorInt()) }.getOrElse { Color(0xFFCCCCCC) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = Color(space.coverColor.toColorInt()).copy(alpha = 0.1f)
+            containerColor = coverColor.copy(alpha = 0.1f)
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -646,7 +648,7 @@ fun SpaceInfoCard(
                 Icon(
                     imageVector = Icons.Default.Group,
                     contentDescription = null,
-                    tint = Color(space.coverColor.toColorInt())
+                    tint = coverColor
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
@@ -808,11 +810,10 @@ fun PostCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(author?.avatarColor?.toColorInt() ?: 0xFFCCCCCC.toInt()))
+                    StyledAvatar(
+                        avatarData = author?.avatarColor ?: "#CCCCCC",
+                        size = 40.dp,
+                        initial = author?.nickname?.firstOrNull()?.uppercase() ?: "U"
                     )
                     Spacer(Modifier.width(12.dp))
                     Column {
@@ -1047,11 +1048,10 @@ fun CreatePostScreen(
                                             onCheckedChange = null
                                         )
                                         Spacer(Modifier.width(8.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .clip(CircleShape)
-                                                .background(Color(member.user.avatarColor.toColorInt()))
+                                        StyledAvatar(
+                                            avatarData = member.user.avatarColor,
+                                            size = 32.dp,
+                                            initial = member.user.nickname.firstOrNull()?.uppercase() ?: "U"
                                         )
                                         Spacer(Modifier.width(8.dp))
                                         Text(member.user.nickname)
@@ -1314,11 +1314,11 @@ fun PostMentionStatusView(
                             .padding(vertical = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(Color((mention.avatarColor ?: "#CCCCCC").toColorInt()))
+                        StyledAvatar(
+                            avatarData = mention.avatarColor ?: "#CCCCCC",
+                            size = 24.dp,
+                            initial = mention.nickname?.firstOrNull()?.uppercase() ?: "U",
+                            showInitial = false
                         )
                         Spacer(Modifier.width(8.dp))
 

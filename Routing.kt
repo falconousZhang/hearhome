@@ -126,6 +126,8 @@ data class Message(
     val receiverId: Int,
     val content: String? = null,
     val imageUrl: String? = null,
+    val audioUrl: String? = null,
+    val audioDuration: Long? = null,
     val timestamp: Long,
     val isRead: Boolean = false
 )
@@ -544,8 +546,7 @@ fun Application.configureRouting() {
     val dbPort = 3306
     val dbName = "perfect"
     val dbUser = "appuser"
-    // 从环境变量读取dbPassword
-    val dbPassword = System.getenv("DB_PASSWORD") ?: throw IllegalStateException("请设置环境变量 DB_PASSWORD")
+    val dbPassword = "Zcw205306" // 【重要】建议从配置文件读取
 
     val jdbcUrl = "jdbc:mysql://$dbHost:$dbPort/$dbName?user=$dbUser&password=$dbPassword&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
     var connection: Connection? = null
@@ -639,6 +640,43 @@ fun Application.configureRouting() {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "未找到文件"))
                 else
                     call.respond(mapOf("imageUrl" to imageUrl))
+
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
+            }
+        }
+
+        post("/upload/audio") {
+            try {
+                val multipart = call.receiveMultipart()
+                var audioUrl: String? = null
+
+                multipart.forEachPart { part ->
+                    if (part is PartData.FileItem) {
+                        val originalFileName = part.originalFileName ?: "audio_${System.currentTimeMillis()}.m4a"
+                        val fileName = "${System.currentTimeMillis()}_$originalFileName"
+
+                        val uploadDir = File("uploads")
+                        if (!uploadDir.exists()) uploadDir.mkdirs()
+
+                        val file = File(uploadDir, fileName)
+
+                        part.streamProvider().use { input ->
+                            file.outputStream().buffered().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+
+                        val baseUrl = "http://${call.request.host()}:${call.request.port()}"
+                        audioUrl = "$baseUrl/uploads/$fileName"
+                    }
+                    part.dispose()
+                }
+
+                if (audioUrl == null)
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "未找到文件"))
+                else
+                    call.respond(mapOf("audioUrl" to audioUrl))
 
             } catch (e: Exception) {
                 call.respond(HttpStatusCode.InternalServerError, mapOf("error" to e.message))
@@ -1090,6 +1128,54 @@ fun Application.configureRouting() {
                     else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "私密问题更新失败"))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "服务器错误"))
+                }
+            }
+            // PUT /users/avatar/{id} - 更新用户头像样式
+            put("/avatar/{id}") {
+                @Serializable
+                data class UpdateAvatarRequest(val avatarColor: String)
+
+                val userId = call.parameters["id"]?.toIntOrNull()
+                if (userId == null) {
+                    return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid user ID"))
+                }
+
+                try {
+                    val req = call.receive<UpdateAvatarRequest>()
+
+                    // 验证头像数据格式
+                    // 支持的格式：
+                    // - 纯色：#RRGGBB
+                    // - 渐变：gradient:#RRGGBB:#RRGGBB
+                    // - 马赛克：mosaic:#RRGGBB
+                    // - 波点：dots:#RRGGBB
+                    // - 条纹：stripes:#RRGGBB
+                    // - 菱形：diamond:#RRGGBB
+                    val validPrefixes = listOf("gradient:", "mosaic:", "dots:", "stripes:", "diamond:")
+                    val isValidFormat = req.avatarColor.startsWith("#") ||
+                            validPrefixes.any { prefix ->
+                                req.avatarColor.startsWith(prefix) &&
+                                        req.avatarColor.removePrefix(prefix).split(":").all {
+                                            it.startsWith("#") && it.length in listOf(4, 7, 9)
+                                        }
+                            }
+
+                    if (!isValidFormat) {
+                        return@put call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "Invalid avatar format"))
+                    }
+
+                    val updatedRows = executeUpdate(
+                        "UPDATE users SET avatarColor = ? WHERE uid = ?",
+                        { setString(1, req.avatarColor); setInt(2, userId) }
+                    )
+
+                    if (updatedRows > 0) {
+                        call.respond(HttpStatusCode.OK, GenericResponse(true, "Avatar updated successfully"))
+                    } else {
+                        call.respond(HttpStatusCode.NotFound, GenericResponse(false, "User not found"))
+                    }
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))
                 }
             }
         }
@@ -2047,7 +2133,7 @@ fun Application.configureRouting() {
             get("/comments/{postId}") {
                 val postId = call.parameters["postId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
                 try {
-                    val comments = executeQuery("SELECT * FROM post_comments WHERE postId = ? AND status = 'normal' ORDER BY timestamp ASC", { setInt(1, postId) }) { rs ->
+                    val comments = executeQuery("SELECT * FROM post_comments WHERE postId = ? AND (status IS NULL OR status = 'normal') ORDER BY timestamp ASC", { setInt(1, postId) }) { rs ->
                         PostComment(rs.getInt("id"), rs.getInt("postId"), rs.getInt("authorId"), rs.getString("content"), rs.getInt("replyToUserId").takeIf { !rs.wasNull() }, rs.getLong("timestamp"), rs.getString("status"))
                     }
                     call.respond(comments)
@@ -2411,6 +2497,8 @@ fun Application.configureRouting() {
                             receiverId = rs.getInt("receiverId"),
                             content = rs.getString("content"),
                             imageUrl = rs.getString("imageUrl"), // 读取 imageUrl 字段
+                            audioUrl = rs.getString("audioUrl"),
+                            audioDuration = rs.getLong("audioDuration").takeIf { !rs.wasNull() },
                             timestamp = rs.getLong("timestamp"),
                             isRead = rs.getBoolean("isRead")
                         )
@@ -2423,14 +2511,16 @@ fun Application.configureRouting() {
             post {
                 val message = call.receive<Message>()
                 try {
-                    // 在 SQL 语句中添加 imageUrl
-                    val newId = executeInsert("INSERT INTO messages (senderId, receiverId, content, imageUrl, timestamp, isRead) VALUES (?, ?, ?, ?, ?, ?)", {
+                    // 在 SQL 语句中添加 imageUrl, audioUrl, audioDuration
+                    val newId = executeInsert("INSERT INTO messages (senderId, receiverId, content, imageUrl, audioUrl, audioDuration, timestamp, isRead) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", {
                         setInt(1, message.senderId)
                         setInt(2, message.receiverId)
                         setString(3, message.content)
                         setString(4, message.imageUrl) // 设置 imageUrl 的值
-                        setLong(5, System.currentTimeMillis())
-                        setBoolean(6, false)
+                        setString(5, message.audioUrl)
+                        if (message.audioDuration != null) setLong(6, message.audioDuration) else setNull(6, java.sql.Types.BIGINT)
+                        setLong(7, System.currentTimeMillis())
+                        setBoolean(8, false)
                     })
                     if (newId != -1) call.respond(HttpStatusCode.Created, message.copy(id = newId))
                     else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "发送消息失败。"))

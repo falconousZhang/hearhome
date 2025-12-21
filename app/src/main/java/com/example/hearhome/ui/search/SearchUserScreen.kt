@@ -17,7 +17,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.delay
@@ -27,6 +26,7 @@ import com.example.hearhome.ui.friend.FriendViewModel
 import com.example.hearhome.ui.friend.FriendViewModelFactory
 import com.example.hearhome.ui.relation.CoupleViewModel
 import com.example.hearhome.ui.relation.CoupleViewModelFactory
+import com.example.hearhome.ui.components.StyledAvatar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -232,11 +232,10 @@ private fun UserCard(
     Card(Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(50.dp)
-                        .clip(CircleShape)
-                        .background(Color(user.avatarColor.toColorInt()))
+                StyledAvatar(
+                    avatarData = user.avatarColor,
+                    size = 50.dp,
+                    initial = user.nickname.firstOrNull()?.uppercase() ?: "U"
                 )
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {

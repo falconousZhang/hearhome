@@ -56,13 +56,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.toColorInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.remote.ApiService
 import com.example.hearhome.ui.components.AppBottomNavigation
+import com.example.hearhome.ui.components.StyledAvatar
 import com.example.hearhome.ui.friend.FriendViewModel
 import com.example.hearhome.ui.friend.FriendViewModelFactory
 import com.example.hearhome.ui.friend.FriendWithRelation
@@ -256,11 +256,10 @@ fun RelationListScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(50.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(partner.avatarColor.toColorInt()))
+                            StyledAvatar(
+                                avatarData = partner.avatarColor,
+                                size = 50.dp,
+                                initial = partner.nickname.firstOrNull()?.uppercase() ?: "U"
                             )
                             Spacer(Modifier.width(12.dp))
                             Column {
@@ -326,8 +325,10 @@ fun RelationListScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Box(
-                                    modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(friendInfo.user.avatarColor.toColorInt()))
+                                StyledAvatar(
+                                    avatarData = friendInfo.user.avatarColor,
+                                    size = 40.dp,
+                                    initial = friendInfo.user.nickname.firstOrNull()?.uppercase() ?: "U"
                                 )
                                 Spacer(Modifier.width(12.dp))
                                 Text(

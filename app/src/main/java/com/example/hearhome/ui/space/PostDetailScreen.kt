@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
@@ -24,6 +23,7 @@ import com.example.hearhome.model.AttachmentType
 import com.example.hearhome.model.PendingAttachment
 import com.example.hearhome.ui.components.AudioPlayer
 import com.example.hearhome.ui.components.EmojiTextField
+import com.example.hearhome.ui.components.StyledAvatar
 import com.example.hearhome.ui.components.attachments.AttachmentSelector
 import com.example.hearhome.ui.components.attachments.AttachmentAudioList
 import com.example.hearhome.ui.components.attachments.AttachmentGallery
@@ -418,11 +418,10 @@ fun CommentItem(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .background(Color(author.avatarColor.toColorInt()))
+                    StyledAvatar(
+                        avatarData = author.avatarColor,
+                        size = 32.dp,
+                        initial = author.nickname.firstOrNull()?.uppercase() ?: "U"
                     )
                     Spacer(Modifier.width(8.dp))
                     Column {

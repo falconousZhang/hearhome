@@ -1,6 +1,5 @@
 package com.example.hearhome.ui.profile
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,11 +23,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -42,9 +38,11 @@ import androidx.navigation.NavController
 import com.example.hearhome.data.local.AppDatabase
 import com.example.hearhome.ui.auth.AuthViewModel
 import com.example.hearhome.ui.components.AppBottomNavigation
+import com.example.hearhome.ui.components.AvatarStyle
+import com.example.hearhome.ui.components.StyledAvatar
+import com.example.hearhome.ui.components.generateAvatarData
+import com.example.hearhome.ui.components.parseAvatarData
 import kotlinx.coroutines.delay
-import kotlin.math.abs
-import kotlin.random.Random
 
 // ==================== 头像风格定义 ====================
 
@@ -392,235 +390,7 @@ fun ProfileScreen(
 }
 
 // ==================== 头像渲染组件 ====================
-
-/**
- * 解析头像数据格式
- */
-private fun parseAvatarData(avatarData: String): Pair<AvatarStyle, String> {
-    return when {
-        avatarData.startsWith("gradient:") -> AvatarStyle.GRADIENT to avatarData.removePrefix("gradient:")
-        avatarData.startsWith("mosaic:") -> AvatarStyle.MOSAIC to avatarData.removePrefix("mosaic:")
-        avatarData.startsWith("dots:") -> AvatarStyle.DOTS to avatarData.removePrefix("dots:")
-        avatarData.startsWith("stripes:") -> AvatarStyle.STRIPES to avatarData.removePrefix("stripes:")
-        avatarData.startsWith("diamond:") -> AvatarStyle.DIAMOND to avatarData.removePrefix("diamond:")
-        else -> AvatarStyle.SOLID to avatarData
-    }
-}
-
-/**
- * 生成头像数据字符串
- */
-private fun generateAvatarData(style: AvatarStyle, colorData: String): String {
-    return "${style.prefix}$colorData"
-}
-
-/**
- * 带样式的头像显示组件
- */
-@Composable
-fun StyledAvatar(
-    avatarData: String,
-    size: Dp,
-    initial: String,
-    modifier: Modifier = Modifier
-) {
-    val (style, colorData) = parseAvatarData(avatarData)
-    
-    Box(
-        modifier = modifier
-            .size(size)
-            .clip(CircleShape),
-        contentAlignment = Alignment.Center
-    ) {
-        when (style) {
-            AvatarStyle.SOLID -> {
-                val color = try { Color(colorData.toColorInt()) } catch (e: Exception) { Color.Gray }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(color)
-                )
-            }
-            AvatarStyle.GRADIENT -> {
-                val colors = colorData.split(":").mapNotNull { 
-                    try { Color(it.toColorInt()) } catch (e: Exception) { null }
-                }
-                if (colors.size >= 2) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Brush.linearGradient(colors))
-                    )
-                } else {
-                    Box(modifier = Modifier.fillMaxSize().background(Color.Gray))
-                }
-            }
-            AvatarStyle.MOSAIC -> {
-                val baseColor = try { Color(colorData.toColorInt()) } catch (e: Exception) { Color.Gray }
-                MosaicBackground(baseColor = baseColor, modifier = Modifier.fillMaxSize())
-            }
-            AvatarStyle.DOTS -> {
-                val baseColor = try { Color(colorData.toColorInt()) } catch (e: Exception) { Color.Gray }
-                DotsBackground(baseColor = baseColor, modifier = Modifier.fillMaxSize())
-            }
-            AvatarStyle.STRIPES -> {
-                val baseColor = try { Color(colorData.toColorInt()) } catch (e: Exception) { Color.Gray }
-                StripesBackground(baseColor = baseColor, modifier = Modifier.fillMaxSize())
-            }
-            AvatarStyle.DIAMOND -> {
-                val baseColor = try { Color(colorData.toColorInt()) } catch (e: Exception) { Color.Gray }
-                DiamondBackground(baseColor = baseColor, modifier = Modifier.fillMaxSize())
-            }
-        }
-        
-        // 显示首字母
-        Text(
-            text = initial,
-            style = MaterialTheme.typography.headlineLarge.copy(fontSize = (size.value * 0.4f).sp),
-            color = Color.White
-        )
-    }
-}
-
-/**
- * 马赛克背景
- */
-@Composable
-private fun MosaicBackground(baseColor: Color, modifier: Modifier = Modifier) {
-    val seed = remember { Random.nextInt() }
-    Canvas(modifier = modifier) {
-        val cellSize = size.minDimension / 6
-        val rows = (size.height / cellSize).toInt() + 1
-        val cols = (size.width / cellSize).toInt() + 1
-        val random = Random(seed)
-        
-        for (row in 0 until rows) {
-            for (col in 0 until cols) {
-                val variation = random.nextFloat() * 0.4f - 0.2f
-                val color = baseColor.copy(
-                    red = (baseColor.red + variation).coerceIn(0f, 1f),
-                    green = (baseColor.green + variation).coerceIn(0f, 1f),
-                    blue = (baseColor.blue + variation).coerceIn(0f, 1f)
-                )
-                drawRect(
-                    color = color,
-                    topLeft = Offset(col * cellSize, row * cellSize),
-                    size = Size(cellSize, cellSize)
-                )
-            }
-        }
-    }
-}
-
-/**
- * 波点背景
- */
-@Composable
-private fun DotsBackground(baseColor: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        // 背景色（稍暗）
-        drawRect(color = baseColor.copy(alpha = 0.8f))
-        
-        val dotRadius = size.minDimension / 12
-        val spacing = dotRadius * 2.5f
-        val rows = (size.height / spacing).toInt() + 2
-        val cols = (size.width / spacing).toInt() + 2
-        
-        // 绘制波点
-        val lighterColor = baseColor.copy(
-            red = (baseColor.red + 0.3f).coerceIn(0f, 1f),
-            green = (baseColor.green + 0.3f).coerceIn(0f, 1f),
-            blue = (baseColor.blue + 0.3f).coerceIn(0f, 1f)
-        )
-        
-        for (row in 0 until rows) {
-            for (col in 0 until cols) {
-                val offsetX = if (row % 2 == 0) 0f else spacing / 2
-                drawCircle(
-                    color = lighterColor,
-                    radius = dotRadius,
-                    center = Offset(col * spacing + offsetX, row * spacing)
-                )
-            }
-        }
-    }
-}
-
-/**
- * 条纹背景
- */
-@Composable
-private fun StripesBackground(baseColor: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val stripeWidth = size.minDimension / 8
-        val numStripes = ((size.width + size.height) / stripeWidth).toInt() + 2
-        
-        val lighterColor = baseColor.copy(
-            red = (baseColor.red + 0.2f).coerceIn(0f, 1f),
-            green = (baseColor.green + 0.2f).coerceIn(0f, 1f),
-            blue = (baseColor.blue + 0.2f).coerceIn(0f, 1f)
-        )
-        
-        // 背景
-        drawRect(color = baseColor)
-        
-        // 斜条纹
-        for (i in 0 until numStripes step 2) {
-            val start = i * stripeWidth - size.height
-            drawLine(
-                color = lighterColor,
-                start = Offset(start, size.height),
-                end = Offset(start + size.height, 0f),
-                strokeWidth = stripeWidth
-            )
-        }
-    }
-}
-
-/**
- * 菱形背景
- */
-@Composable
-private fun DiamondBackground(baseColor: Color, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val cellSize = size.minDimension / 4
-        val rows = (size.height / cellSize).toInt() + 2
-        val cols = (size.width / cellSize).toInt() + 2
-        
-        val lighterColor = baseColor.copy(
-            red = (baseColor.red + 0.15f).coerceIn(0f, 1f),
-            green = (baseColor.green + 0.15f).coerceIn(0f, 1f),
-            blue = (baseColor.blue + 0.15f).coerceIn(0f, 1f)
-        )
-        val darkerColor = baseColor.copy(
-            red = (baseColor.red - 0.15f).coerceIn(0f, 1f),
-            green = (baseColor.green - 0.15f).coerceIn(0f, 1f),
-            blue = (baseColor.blue - 0.15f).coerceIn(0f, 1f)
-        )
-        
-        // 背景
-        drawRect(color = baseColor)
-        
-        // 菱形图案
-        for (row in 0 until rows) {
-            for (col in 0 until cols) {
-                val offsetX = if (row % 2 == 0) 0f else cellSize / 2
-                val centerX = col * cellSize + offsetX
-                val centerY = row * cellSize
-                val color = if ((row + col) % 2 == 0) lighterColor else darkerColor
-                
-                val path = androidx.compose.ui.graphics.Path().apply {
-                    moveTo(centerX, centerY - cellSize / 2)
-                    lineTo(centerX + cellSize / 2, centerY)
-                    lineTo(centerX, centerY + cellSize / 2)
-                    lineTo(centerX - cellSize / 2, centerY)
-                    close()
-                }
-                drawPath(path, color)
-            }
-        }
-    }
-}
+// Avatar parsing and rendering now provided by ui.components.Avatar.*
 
 // ==================== 头像选择对话框 ====================
 

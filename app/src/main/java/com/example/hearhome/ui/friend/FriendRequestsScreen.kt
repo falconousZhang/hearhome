@@ -41,10 +41,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.graphics.toColorInt
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import com.example.hearhome.data.remote.ApiService
+import com.example.hearhome.ui.components.StyledAvatar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,7 +109,11 @@ fun FriendRequestsScreen(
                                 modifier = Modifier.padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(modifier = Modifier.size(50.dp).clip(CircleShape).background(Color(sender.avatarColor.toColorInt())))
+                                StyledAvatar(
+                                    avatarData = sender.avatarColor,
+                                    size = 50.dp,
+                                    initial = sender.nickname.firstOrNull()?.uppercase() ?: "U"
+                                )
                                 Spacer(Modifier.width(16.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(sender.nickname.ifBlank { "(未设置昵称)" }, style = MaterialTheme.typography.titleMedium)
