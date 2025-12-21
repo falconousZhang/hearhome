@@ -42,4 +42,9 @@ interface MediaAttachmentDao {
         "DELETE FROM media_attachments WHERE ownerType = :ownerType AND ownerId = :ownerId"
     )
     suspend fun deleteAttachments(ownerType: String, ownerId: Int)
+
+    @Query(
+        "DELETE FROM media_attachments WHERE ownerType = :ownerType AND ownerId = :ownerId AND type = :type"
+    )
+    suspend fun deleteAttachmentsByType(ownerType: String, ownerId: Int, type: String)
 }

@@ -169,7 +169,12 @@ class SpacePostViewModel(
 
                         val imageUrls = parseImages(apiPost.images)
                         if (imageUrls.isNotEmpty()) {
-                            mediaAttachmentDao.deleteAttachments(AttachmentOwnerType.SPACE_POST, apiPost.id)
+                            // 仅删除旧的图片附件，保留语音等其他类型
+                            mediaAttachmentDao.deleteAttachmentsByType(
+                                AttachmentOwnerType.SPACE_POST, 
+                                apiPost.id, 
+                                AttachmentType.IMAGE.name
+                            )
                             val entities = imageUrls.map { url ->
                                 MediaAttachment(
                                     ownerType = AttachmentOwnerType.SPACE_POST,
@@ -591,7 +596,12 @@ class SpacePostViewModel(
                 // 把服务端 images 字段转换成本地附件，保证换设备/重登仍能看到图片
                 val imageUrls = parseImages(apiPost.images)
                 if (imageUrls.isNotEmpty()) {
-                    mediaAttachmentDao.deleteAttachments(AttachmentOwnerType.SPACE_POST, apiPost.id)
+                    // 仅删除旧的图片附件，保留语音等其他类型
+                    mediaAttachmentDao.deleteAttachmentsByType(
+                        AttachmentOwnerType.SPACE_POST, 
+                        apiPost.id, 
+                        AttachmentType.IMAGE.name
+                    )
                     val entities = imageUrls.map { url ->
                         MediaAttachment(
                             ownerType = AttachmentOwnerType.SPACE_POST,
