@@ -2133,8 +2133,20 @@ fun Application.configureRouting() {
             get("/comments/{postId}") {
                 val postId = call.parameters["postId"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
                 try {
-                    val comments = executeQuery("SELECT * FROM post_comments WHERE postId = ? AND (status IS NULL OR status = 'normal') ORDER BY timestamp ASC", { setInt(1, postId) }) { rs ->
-                        PostComment(rs.getInt("id"), rs.getInt("postId"), rs.getInt("authorId"), rs.getString("content"), rs.getInt("replyToUserId").takeIf { !rs.wasNull() }, rs.getLong("timestamp"), rs.getString("status"))
+                    val comments = executeQuery(
+                        "SELECT * FROM post_comments WHERE postId = ? AND (status IS NULL OR TRIM(status) <> 'deleted') ORDER BY timestamp ASC",
+                        { setInt(1, postId) }
+                    ) { rs ->
+                        val normalizedStatus = rs.getString("status")?.takeIf { it.isNotBlank() } ?: "normal"
+                        PostComment(
+                            rs.getInt("id"),
+                            rs.getInt("postId"),
+                            rs.getInt("authorId"),
+                            rs.getString("content"),
+                            rs.getInt("replyToUserId").takeIf { !rs.wasNull() },
+                            rs.getLong("timestamp"),
+                            normalizedStatus
+                        )
                     }
                     call.respond(comments)
                 } catch (e: Exception) { call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString())) }
@@ -2143,16 +2155,29 @@ fun Application.configureRouting() {
                 val comment = call.receive<PostComment>()
                 try {
                     connection?.autoCommit = false
-                    val newId = executeInsert("INSERT INTO post_comments (postId, authorId, content, replyToUserId, timestamp) VALUES (?, ?, ?, ?, ?)", {
-                        setInt(1, comment.postId); setInt(2, comment.authorId); setString(3, comment.content);
-                        if (comment.replyToUserId != null) setInt(4, comment.replyToUserId) else setNull(4, java.sql.Types.INTEGER)
-                        setLong(5, System.currentTimeMillis())
-                    })
-                    executeUpdate("UPDATE space_posts SET commentCount = commentCount + 1 WHERE id = ?", { setInt(1, comment.postId) })
-                    connection?.commit()
+                    val now = System.currentTimeMillis()
+                    val normalizedStatus = comment.status.ifBlank { "normal" }
 
-                    if (newId != -1) call.respond(HttpStatusCode.Created, comment.copy(id = newId))
-                    else call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "发布评论失败。"))
+                    val newId = executeInsert(
+                        "INSERT INTO post_comments (postId, authorId, content, replyToUserId, timestamp, status) VALUES (?, ?, ?, ?, ?, ?)",
+                        {
+                            setInt(1, comment.postId)
+                            setInt(2, comment.authorId)
+                            setString(3, comment.content)
+                            if (comment.replyToUserId != null) setInt(4, comment.replyToUserId) else setNull(4, java.sql.Types.INTEGER)
+                            setLong(5, now)
+                            setString(6, normalizedStatus)
+                        }
+                    )
+
+                    if (newId != -1) {
+                        executeUpdate("UPDATE space_posts SET commentCount = commentCount + 1 WHERE id = ?", { setInt(1, comment.postId) })
+                        connection?.commit()
+                        call.respond(HttpStatusCode.Created, comment.copy(id = newId, timestamp = now, status = normalizedStatus))
+                    } else {
+                        connection?.rollback()
+                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "发布评论失败。"))
+                    }
                 } catch (e: Exception) {
                     connection?.rollback()
                     call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message.toString()))

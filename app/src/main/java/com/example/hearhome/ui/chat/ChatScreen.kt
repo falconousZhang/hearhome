@@ -1,6 +1,8 @@
 package com.example.hearhome.ui.chat
 
+import android.Manifest
 import android.app.Application
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,6 +19,7 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +31,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
@@ -59,10 +63,28 @@ fun ChatScreen(
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val locationPermissions = remember {
+        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
         onResult = { uri -> selectedImageUri = uri }
+    )
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions(),
+        onResult = { permissions ->
+            val granted =
+                permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                    permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+            if (granted) {
+                lastErrorMessage = null
+                viewModel.sendLocation(currentUserId, friendUserId)
+            } else {
+                Toast.makeText(context, "需要定位权限才能发送位置", Toast.LENGTH_SHORT).show()
+            }
+        }
     )
 
     DisposableEffect(currentUserId, friendUserId) {
@@ -124,6 +146,18 @@ fun ChatScreen(
                     Row(verticalAlignment = Alignment.Bottom) {
                         IconButton(onClick = { photoPickerLauncher.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
                             Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Select Photo")
+                        }
+                        IconButton(onClick = {
+                            val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                            val hasCoarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                            if (hasFine || hasCoarse) {
+                                lastErrorMessage = null
+                                viewModel.sendLocation(currentUserId, friendUserId)
+                            } else {
+                                locationPermissionLauncher.launch(locationPermissions)
+                            }
+                        }) {
+                            Icon(Icons.Default.Place, contentDescription = "Send Location")
                         }
                         IconButton(onClick = { showAudioRecorder = !showAudioRecorder }) {
                             Icon(Icons.Default.Mic, contentDescription = "Record Audio", tint = if (showAudioRecorder) MaterialTheme.colorScheme.primary else LocalContentColor.current)

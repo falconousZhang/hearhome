@@ -3,6 +3,10 @@ package com.example.hearhome.ui.chat
 import android.annotation.SuppressLint
 import android.app.Application
 import android.net.Uri
+import android.location.Location
+import android.location.LocationManager
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -40,6 +44,11 @@ class ChatViewModel(
     private val apiService: ApiService,
     application: Application
 ) : AndroidViewModel(application) {
+
+    companion object {
+        // TODO: 替换为你的高德 Web 静态图 key
+        private const val AMAP_WEB_KEY = "36aa15ed72982f81e76b1081d2e670a0"
+    }
 
     private val _uiState = MutableStateFlow(ChatScreenState())
     val uiState: StateFlow<ChatScreenState> = _uiState
@@ -93,11 +102,58 @@ class ChatViewModel(
         }
     }
 
+    fun sendLocation(senderId: Int, receiverId: Int) {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val hasFine = ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val hasCoarse = ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (!hasFine && !hasCoarse) {
+                _uiState.value = _uiState.value.copy(error = "需要定位权限才能发送位置")
+                return@launch
+            }
+
+            val locationManager = ctx.getSystemService(Application.LOCATION_SERVICE) as LocationManager
+            val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            val location: Location? = providers.firstNotNullOfOrNull { provider ->
+                runCatching { locationManager.getLastKnownLocation(provider) }.getOrNull()
+            }
+
+            if (location == null) {
+                _uiState.value = _uiState.value.copy(error = "无法获取当前位置，请稍后重试")
+                return@launch
+            }
+
+            val lat = location.latitude
+            val lon = location.longitude
+            val locationName = "我的位置"
+            val content = "LOCATION:$lat,$lon|$locationName"
+
+            val mapUrl = if (AMAP_WEB_KEY != "REPLACE_WITH_YOUR_AMAP_KEY") {
+                "https://restapi.amap.com/v3/staticmap?location=$lon,$lat&zoom=16&size=400*240&markers=mid,,A:$lon,$lat&key=$AMAP_WEB_KEY"
+            } else null
+
+            // 复用已有发送逻辑，作为带静态图的特殊消息
+            sendMessage(
+                senderId = senderId,
+                receiverId = receiverId,
+                content = content,
+                imageUri = null,
+                audioPath = null,
+                audioDuration = null,
+                overrideImageUrl = mapUrl
+            )
+        }
+    }
+
     fun sendMessage(senderId: Int, receiverId: Int, content: String?, imageUri: Uri?, audioPath: String? = null, audioDuration: Long? = null) {
+        sendMessage(senderId, receiverId, content, imageUri, audioPath, audioDuration, overrideImageUrl = null)
+    }
+
+    private fun sendMessage(senderId: Int, receiverId: Int, content: String?, imageUri: Uri?, audioPath: String? = null, audioDuration: Long? = null, overrideImageUrl: String? = null) {
         viewModelScope.launch {
 
             // ① 文本、图片、语音都为空就不发
-            if (content.isNullOrBlank() && imageUri == null && audioPath == null) return@launch
+            if (content.isNullOrBlank() && imageUri == null && audioPath == null && overrideImageUrl == null) return@launch
 
             var uploadedImageUrl: String? = null
             var uploadedAudioUrl: String? = null
@@ -140,8 +196,8 @@ class ChatViewModel(
             val apiMessage = ApiMessage(
                 senderId = senderId,
                 receiverId = receiverId,
-                content = if (uploadedImageUrl == null && uploadedAudioUrl == null) content else null,  // 图片/语音消息不发文字
-                imageUrl = uploadedImageUrl,
+                content = if (uploadedImageUrl == null && uploadedAudioUrl == null && overrideImageUrl == null) content else content,
+                imageUrl = overrideImageUrl ?: uploadedImageUrl,
                 audioUrl = uploadedAudioUrl,
                 audioDuration = audioDuration,
                 timestamp = System.currentTimeMillis()
