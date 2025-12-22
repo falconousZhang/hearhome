@@ -19,7 +19,13 @@ import kotlinx.serialization.Serializable
 
 // This DTO matches the JSON from the /couples/requests/{userId} endpoint.
 @Serializable
-data class CoupleRequestFromApi(val id: Int, val requesterId: Int, val partnerId: Int, val status: String, val createdAt: Long)
+data class CoupleRequestFromApi(
+    val id: Int,
+    val requesterId: Int,
+    val partnerId: Int,
+    val status: String = "pending", // 后端缺省时提供默认值避免解析报错
+    val createdAt: Long? = null
+)
 
 // This class holds the processed data for the UI
 data class CoupleRequestInfo(
