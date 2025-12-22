@@ -14,6 +14,7 @@ class PetEngine {
         var health = attrs.health
         var energy = attrs.energy
         var hydration = attrs.hydration
+        var intimacy = attrs.intimacy
 
         when (action) {
             is ActionType.Feed -> {
@@ -31,10 +32,11 @@ class PetEngine {
             is ActionType.Play -> {
                 mood += (10 * intimacyFactor).roundToInt()
                 energy -= 6 // play consumes energy
+                intimacy += 5
             }
         }
 
-        return PetAttributes(mood, health, energy, hydration, attrs.intimacy).clamp()
+        return PetAttributes(mood, health, energy, hydration, intimacy).clamp()
     }
 
     /**

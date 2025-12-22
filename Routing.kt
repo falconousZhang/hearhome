@@ -56,6 +56,12 @@ private fun validatePasswordFormat(passwordRaw: String, fieldLabel: String = "�
     return null
 }
 
+private fun normalizeRelationshipStatus(rawStatus: String?, partnerId: Int?): String {
+    if (partnerId == null) return "single"
+    val cleanedStatus = rawStatus?.ifBlank { null }
+    return cleanedStatus ?: "in_relationship"
+}
+
 // ---------------------------------------------------------------------------------
 // --- 1. 数据传输对象 (Data Transfer Objects - DTOs)
 // ---------------------------------------------------------------------------------
@@ -267,6 +273,11 @@ data class SpacePetRequest(
     val name: String? = null,
     val type: String? = null,
     val attributes: SpacePetAttributes
+)
+
+@Serializable
+data class PetPlayRequest(
+    val increment: Int? = null
 )
 
 private fun ResultSet.toSpacePet(): SpacePet = SpacePet(
@@ -827,6 +838,8 @@ fun Application.configureRouting() {
                         "SELECT uid, email, nickname, gender, avatarColor, relationshipStatus, partnerId FROM users WHERE uid = ?",
                         { setInt(1, userId) }
                     ) { rs ->
+                        val partnerId = rs.getInt("partnerId").takeIf { !rs.wasNull() }
+                        val normalizedStatus = normalizeRelationshipStatus(rs.getString("relationshipStatus"), partnerId)
                         User(
                             uid = rs.getInt("uid"),
                             email = rs.getString("email"),
@@ -834,8 +847,8 @@ fun Application.configureRouting() {
                             nickname = rs.getString("nickname"),
                             gender = rs.getString("gender"),
                             avatarColor = rs.getString("avatarColor"),
-                            relationshipStatus = rs.getString("relationshipStatus"),
-                            partnerId = rs.getInt("partnerId").takeIf { !rs.wasNull() }
+                            relationshipStatus = normalizedStatus,
+                            partnerId = partnerId
                         )
                     }.firstOrNull()
 
@@ -848,8 +861,24 @@ fun Application.configureRouting() {
             post("/login") {
                 val req = call.receive<LoginRequest>()
                 try {
-                    val user = executeQuery("SELECT * FROM users WHERE email = ? AND password = ?", { setString(1, req.email); setString(2, req.password) }) { rs ->
-                        User(rs.getInt("uid"), rs.getString("email"), "", rs.getString("secQuestion"), "", rs.getString("nickname"), rs.getString("gender"), rs.getString("avatarColor"), rs.getString("relationshipStatus"), rs.getInt("partnerId").takeIf { !rs.wasNull() })
+                    val user = executeQuery(
+                        "SELECT * FROM users WHERE email = ? AND password = ?",
+                        { setString(1, req.email); setString(2, req.password) }
+                    ) { rs ->
+                        val partnerId = rs.getInt("partnerId").takeIf { !rs.wasNull() }
+                        val normalizedStatus = normalizeRelationshipStatus(rs.getString("relationshipStatus"), partnerId)
+                        User(
+                            uid = rs.getInt("uid"),
+                            email = rs.getString("email"),
+                            password = "",
+                            secQuestion = rs.getString("secQuestion") ?: "",
+                            secAnswerHash = "",
+                            nickname = rs.getString("nickname"),
+                            gender = rs.getString("gender"),
+                            avatarColor = rs.getString("avatarColor"),
+                            relationshipStatus = normalizedStatus,
+                            partnerId = partnerId
+                        )
                     }.firstOrNull()
                     if (user == null) return@post call.respond(HttpStatusCode.Unauthorized, GenericResponse(false, "邮箱或密码不正确。"))
 
@@ -1646,6 +1675,48 @@ fun Application.configureRouting() {
                         call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "保存宠物信息失败"))
                     }
                 }
+                post("/play") {
+                    val spaceId = call.parameters["spaceId"]?.toIntOrNull()
+                        ?: return@post call.respond(HttpStatusCode.BadRequest, GenericResponse(false, "无效的空间ID"))
+                    val payload = runCatching { call.receive<PetPlayRequest>() }.getOrNull()
+                    // 默认增加 5 点亲密度，客户端最多可指定 20
+                    val increment = payload?.increment?.takeIf { it > 0 }?.coerceAtMost(20) ?: 5
+
+                    try {
+                        val pet = executeQuery(
+                            "SELECT * FROM space_pets WHERE spaceId = ?",
+                            { setInt(1, spaceId) }
+                        ) { it.toSpacePet() }.firstOrNull()
+                        if (pet == null) {
+                            return@post call.respond(HttpStatusCode.NotFound, GenericResponse(false, "该空间暂无宠物"))
+                        }
+
+                        val now = System.currentTimeMillis()
+                        val newIntimacy = (pet.attributes.intimacy + increment).coerceAtMost(100)
+                        val updatedRows = executeUpdate(
+                            "UPDATE space_pets SET intimacy = ?, updatedAt = ? WHERE id = ?",
+                            {
+                                setInt(1, newIntimacy)
+                                setLong(2, now)
+                                setInt(3, pet.id)
+                            }
+                        )
+
+                        if (updatedRows <= 0) {
+                            return@post call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, "亲密度更新失败"))
+                        }
+
+                        val updatedPet = pet.copy(
+                            attributes = pet.attributes.copy(intimacy = newIntimacy),
+                            updatedAt = now
+                        )
+                        call.respond(HttpStatusCode.OK, updatedPet)
+                    } catch (e: Exception) {
+                        call.respond(HttpStatusCode.InternalServerError, GenericResponse(false, e.message ?: "亲密度更新失败"))
+                    }
+                }
+
+
             }
             // --- 解散空间 --------------------------------------------------------------------------------------------wdz
             delete("/{spaceId}") {
